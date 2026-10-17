@@ -18,7 +18,7 @@ from .payment_file import PrivateCard, PrivateFileRefused
 from .payment_browser import BindingRefused, Target, WriteRefused
 
 
-PAYMENT_DIAGNOSTIC_VERSION = "0.5.5"
+PAYMENT_DIAGNOSTIC_VERSION = "0.5.7"
 
 
 class RetrievalRefused(ValueError):
@@ -132,7 +132,7 @@ class LocalPayment:
             from tools.interrupt import is_interrupted
             from tools.approval_prompt import request_elicitation_consent
             from tools.approval_human_wait import human_wait_seconds
-            from agent.redact import register_payment_redaction_values
+            from .redaction import register_payment_redaction_values
 
             if (
                 isolation_mode() != "in_process"
@@ -240,7 +240,7 @@ class LocalPayment:
                         target.check()
                         stage = "private_file"
                         card = inbox.consume(rid, merchant)
-                # Both sources use `number`; the core helper uses `card_number`.
+                # Both sources use `number`; the plugin helper uses `card_number`.
                 # Never register billing metadata or standalone expiry fragments.
                 register_payment_redaction_values({
                     "card_number": card["number"], "cvc": card.get("cvc"),

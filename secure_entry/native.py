@@ -92,7 +92,7 @@ def add_login(store, origin, fields):
 def add_card(store, origin, fields):
     """Public native payment API only; its established schema persists CVC."""
     import re
-    from agent.redact import register_payment_redaction_values
+    from .redaction import register_payment_redaction_values
     validate_origin(origin)
     if (not re.fullmatch(r'[0-9]{12,19}', fields['card_number'])
             or not re.fullmatch(r'[0-9]{3,4}', fields['cvc'])

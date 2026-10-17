@@ -171,7 +171,7 @@ class PaymentBrowserTests(unittest.TestCase):
         })
         self.assertEqual(result, {
             "success": False, "status": "write_unknown", "stage": "write",
-            "payment_diagnostic_version": "0.5.5",
+            "payment_diagnostic_version": "0.5.7",
             "refusal": "initial_mismatch", "field": "cc-name", "written_fields": 0,
         })
 
@@ -328,7 +328,7 @@ class PaymentBrowserTests(unittest.TestCase):
                     status="refused",
                     stage="target_binding",
                     refusal=category,
-                    payment_diagnostic_version="0.5.5",
+                    payment_diagnostic_version="0.5.7",
                 ),
             )
 
@@ -786,7 +786,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 success=True,
                 status="filled",
                 filled_fields=4,
-                payment_diagnostic_version="0.5.5",
+                payment_diagnostic_version="0.5.7",
             ),
         )
         for metadata in card["billing_address"].values():
@@ -1078,7 +1078,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 "success": True,
                 "status": "filled",
                 "filled_fields": 4,
-                "payment_diagnostic_version": "0.5.5",
+                "payment_diagnostic_version": "0.5.7",
             },
         )
         self.assertIn("https://merchant.test", prompts[0]["command"])
@@ -1166,7 +1166,7 @@ class PaymentBrowserTests(unittest.TestCase):
             {
                 "success": False,
                 "status": "payment_declined",
-                "payment_diagnostic_version": "0.5.5",
+                "payment_diagnostic_version": "0.5.7",
             },
         )
         self.assertEqual(

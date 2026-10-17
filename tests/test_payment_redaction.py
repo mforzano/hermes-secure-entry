@@ -101,6 +101,7 @@ class PaymentRedactionTests(unittest.TestCase):
             result = json.loads(facility.fill(args, task_id="synthetic-payment"))
             self.assert_payment_redaction()
             self.assertTrue(result["success"], result)
+            self.assertEqual(result["payment_diagnostic_version"], "0.5.7")
 
     def test_add_card_registers_secrets_before_native_storage_without_url_fragments(self):
         test = self
@@ -113,3 +114,55 @@ class PaymentRedactionTests(unittest.TestCase):
         result = add_card(CheckingStore(self.home / "vault"), "https://merchant.test", self.fields)
         self.assert_payment_redaction()
         self.assertEqual(result["status"], "saved")
+
+    def test_generic_password_and_otp_rules_survive_payment_registration(self):
+        from agent.redact import register_vault_redaction_value
+        from secure_entry.redaction import register_payment_redaction_values
+        for secret in ("1", "ab", "975", "246810", "before\r\nafter"):
+            register_vault_redaction_value(secret)
+        register_payment_redaction_values(self.fields)
+        for secret in ("1", "ab", "975", "246810", "before\r\nafter", "beforeafter"):
+            self.assertEqual(redact_registered_vault_values("prefix" + secret + "suffix"),
+                             "prefix«redacted-vault-secret»suffix")
+
+    def test_optional_cvc_integer_expiry_and_grouped_pan(self):
+        from secure_entry.redaction import register_payment_redaction_values
+        register_payment_redaction_values({
+            "card_number": "3782 822463 10005", "exp_month": 1, "exp_year": 2035,
+            "billing_address": {"country": "CA"}, "policy": True,
+        })
+        for secret in ("378282246310005", "3782 822463 10005", "3782-822463-10005",
+                       "1/35", "01/2035", "01 - 2035", "0135", "012035"):
+            self.assertEqual(redact_registered_vault_values(secret), "«redacted-vault-secret»")
+        public = "CA True 1 01 2035 35"
+        self.assertEqual(redact_registered_vault_values(public), public)
+
+    def test_invalid_expiry_and_boolean_fields_do_not_become_rules(self):
+        from secure_entry.redaction import register_payment_redaction_values
+        register_payment_redaction_values({
+            "card_number": True, "cvc": False, "exp_month": 13, "exp_year": 2035,
+        })
+        public = "True False 13 2035"
+        self.assertEqual(redact_registered_vault_values(public), public)
+
+    def test_short_credentials_still_mask_exact_substrings(self):
+        from secure_entry.redaction import register_payment_redaction_values
+        register_payment_redaction_values({"card_number": "ab", "cvc": "1"})
+        self.assertEqual(redact_registered_vault_values("xab1y"),
+                         "x«redacted-vault-secret»«redacted-vault-secret»y")
+
+    def test_native_metadata_listing_does_not_register_payment_fields(self):
+        store = VaultStore(self.home / "vault")
+        store.add_item("payment", "synthetic", self.fields, origin="https://merchant.test")
+        self.assertEqual(len(store.list_items()), 1)
+        public = "1 2035 SYNTHETIC CARDHOLDER 10001"
+        self.assertEqual(redact_registered_vault_values(public), public)
+
+    def test_payment_registration_retains_profile_isolation(self):
+        from secure_entry.redaction import register_payment_redaction_values
+        register_payment_redaction_values(self.fields)
+        with patch.dict(os.environ, HERMES_HOME=str(self.home / "other")):
+            self.assertEqual(redact_registered_vault_values(self.fields["card_number"]),
+                             self.fields["card_number"])
+        self.assertEqual(redact_registered_vault_values(self.fields["card_number"]),
+                         "«redacted-vault-secret»")
