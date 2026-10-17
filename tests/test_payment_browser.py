@@ -161,6 +161,320 @@ class PaymentBrowserTests(unittest.TestCase):
         self.assertTrue(target.attached)
         return target
 
+    def test_standard_form_non_data_buttons_are_not_fill_targets(self):
+        for control in (
+            '<button type="submit" hidden>Pay</button>',
+            '<button type="button">Help</button>',
+            '<button type="reset">Reset</button>',
+            '<input type="submit" hidden>',
+            '<input type="button" value="Help">',
+            '<input type="reset">',
+            '<input type="image" alt="Pay">',
+            '<output hidden>Calculated total</output>',
+            '<fieldset><legend>Card details</legend></fieldset>',
+        ):
+            with self.subTest(control=control):
+                target = self.target_for_html(
+                    '<form>' + control + '<input autocomplete="cc-number">'
+                    '<input autocomplete="cc-exp"><input autocomplete="cc-csc">'
+                    '<input autocomplete="postal-code"></form>'
+                )
+                result = target.fill(dict(
+                    number='4242424242424242', exp_month=12, exp_year=2035,
+                    cvc='123', billing_address={'postal_code': '10001'},
+                ))
+                self.assertEqual(result['filled_fields'], 4)
+                self.assertTrue(self.page.frames[1].evaluate('''() =>
+                    [...document.querySelectorAll('input')]
+                      .filter(e => e.autocomplete).every(e => e.value.length > 0)'''))
+                target.close()
+
+    def test_native_facility_enables_retained_billing_during_pan_event(self):
+        frame = self.page.frames[1]
+        frame.evaluate('''() => {
+            document.body.innerHTML='<form><button type="submit" hidden>Pay</button><span class="brand"></span>' +
+                '<input autocomplete="cc-number"><input autocomplete="cc-exp">' +
+                '<input autocomplete="cc-csc"><input autocomplete="postal-code" disabled></form>';
+            document.querySelector('[autocomplete="cc-number"]').oninput=e=>{
+                e.target.value=e.target.value.match(/.{1,4}/g).join(' ');
+                e.target.setAttribute('value',e.target.value);
+                e.target.setAttribute('aria-invalid','false');
+                document.querySelector('.brand').classList.add('recognized');
+                document.querySelector('[autocomplete="postal-code"]').disabled=false;
+            };
+            document.querySelector('[autocomplete="cc-exp"]').oninput=e=>{
+                e.target.value=e.target.value.replace('/',' / ');
+                e.target.setAttribute('value',e.target.value);
+            };
+        }''')
+        result, _ = self._run_facility(issued_card=dict(
+            number='4242424242424242', cvc='123', exp_month=12, exp_year=2035,
+            billing_address={'postal_code': '10001'},
+        ))
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['status'], 'filled')
+        self.assertEqual(result['filled_fields'], 4)
+        self.assertTrue(frame.evaluate('''() => [...document.querySelectorAll('input')]
+            .every(e=>e.value.length>0 && !e.matches(':disabled'))'''))
+
+    def test_native_facility_reports_unavailable_optional_and_required_billing(self):
+        for required in (False, True):
+            with self.subTest(required=required):
+                frame = self.page.frames[1]
+                frame.evaluate('''required => {
+                    document.body.innerHTML='<form><button hidden>Pay</button>' +
+                        '<input autocomplete="postal-code" disabled '+(required?'required':'')+'>' +
+                        '<input autocomplete="cc-number"><input autocomplete="cc-exp">' +
+                        '<input autocomplete="cc-csc"></form>';
+                    window.billingEvents=0;
+                    document.querySelector('[autocomplete="postal-code"]').oninput=()=>window.billingEvents++;
+                }''', required)
+                result, _ = self._run_facility(issued_card=dict(
+                    number='4242424242424242', cvc='123', exp_month=12, exp_year=2035,
+                    billing_address={'postal_code': '10001'},
+                ))
+                if required:
+                    self.assertFalse(result['success'], result)
+                    self.assertEqual(result['status'], 'write_unknown')
+                    self.assertEqual(result['refusal'], 'billing_unavailable')
+                    self.assertEqual(result['written_fields'], 3)
+                else:
+                    self.assertTrue(result['success'], result)
+                    self.assertEqual(result['filled_fields'], 3)
+                    self.assertEqual(result['skipped_optional_fields'], ['billing postal-code'])
+                self.assertEqual(frame.evaluate('window.billingEvents'), 0)
+                self.assertTrue(frame.locator('[autocomplete="postal-code"]').evaluate('(e)=>e.value==="" && e.matches(":disabled")'))
+
+    def test_billing_dependency_matrix_late_events_and_inherited_disabled(self):
+        for grouping in ('direct', 'fieldset', 'legend'):
+            for trigger in ('cc-exp', 'cc-csc', 'cc-name'):
+                with self.subTest(grouping=grouping, trigger=trigger):
+                    billing = '<input autocomplete="postal-code" required'+(' disabled' if grouping=='direct' else '')+'>'
+                    if grouping=='fieldset':
+                        billing='<fieldset disabled><legend>Billing</legend>'+billing+'</fieldset>'
+                    if grouping=='legend':
+                        billing='<fieldset disabled><legend><button type="button">Help</button></legend>'+billing+'</fieldset>'
+                    target = self.target_for_html('<form>'+billing+
+                        '<button type="submit" hidden>Pay</button><input autocomplete="cc-number">'
+                        '<input autocomplete="cc-exp"><input autocomplete="cc-csc"><input autocomplete="cc-name"></form>')
+                    self.page.frames[1].evaluate('''({trigger,grouping})=>{
+                        const zip=document.querySelector('[autocomplete="postal-code"]');
+                        document.querySelector('[autocomplete="'+trigger+'"]').onchange=()=>{
+                            if(grouping==='direct')zip.disabled=false;
+                            else zip.closest('fieldset').disabled=false;
+                        };
+                        if(grouping==='direct' && trigger!=='cc-exp')
+                            document.querySelector('[autocomplete="cc-exp"]').oninput=()=>{
+                                zip.disabled=false;zip.disabled=true;
+                            };
+                    }''', dict(trigger=trigger, grouping=grouping))
+                    result=target.fill(dict(number='4242424242424242', cvc='123', exp_month=12, exp_year=2035,
+                        billing_address={'postal_code':'10001','name':'SYNTHETIC NAME'}))
+                    self.assertEqual(result['filled_fields'], 5)
+                    self.assertNotIn('skipped_optional_fields', result)
+                    target.close()
+
+    def test_readonly_billing_is_preserved_or_explicitly_skipped_never_written(self):
+        for value, required, outcome in (('', False, 'skip'), ('10001', True, 'match'),
+                ('', True, 'unavailable'), ('99999', False, 'conflict')):
+            with self.subTest(outcome=outcome):
+                target=self.target_for_html('<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'
+                    '<input autocomplete="postal-code" readonly value="'+value+'"'+(' required' if required else '')+'></form>')
+                card=dict(number='4242424242424242', exp_month=12, exp_year=2035,
+                    billing_address={'postal_code':'10001'})
+                if outcome in ('unavailable','conflict'):
+                    with self.assertRaises(payment_browser.WriteRefused) as caught:
+                        target.fill(card)
+                    self.assertEqual(caught.exception.category, 'billing_unavailable' if outcome=='unavailable' else 'initial_mismatch')
+                    self.assertEqual(caught.exception.written, 2 if outcome=='unavailable' else 0)
+                else:
+                    result=target.fill(card)
+                    self.assertEqual(result['filled_fields'], 2)
+                    self.assertEqual(result.get('skipped_optional_fields', []), ['billing postal-code'] if outcome=='skip' else [])
+                self.assertEqual(self.page.frames[1].locator('[autocomplete="postal-code"]').input_value(), value)
+                target.close()
+
+    def test_disabled_billing_first_legend_credential_remains_writable(self):
+        target=self.target_for_html('<form><fieldset disabled><legend>'
+            '<input autocomplete="cc-number"><input autocomplete="cc-exp"></legend>'
+            '<input autocomplete="postal-code" required></fieldset></form>')
+        self.page.frames[1].evaluate('''()=>{
+            document.querySelector('[autocomplete="cc-exp"]').oninput=()=>document.querySelector('fieldset').disabled=false;
+        }''')
+        self.assertEqual(target.fill(dict(number='4242424242424242',exp_month=12,exp_year=2035,
+            billing_address={'postal_code':'10001'}))['filled_fields'],3)
+
+    def test_unsupplied_required_unavailable_billing_does_not_gain_false_validity(self):
+        for state in ('readonly','disabled'):
+            with self.subTest(state=state):
+                target=self.target_for_html('<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'
+                    '<input autocomplete="billing address-line1" required '+state+'></form>')
+                with self.assertRaises(payment_browser.WriteRefused) as caught:
+                    target.fill(dict(number='4242424242424242',exp_month=12,exp_year=2035,
+                        preserve_unsupplied_billing=True))
+                self.assertEqual(caught.exception.category,'source_missing')
+                self.assertEqual(caught.exception.written,0)
+                target.close()
+
+    def test_required_readonly_billing_empty_source_is_not_satisfied(self):
+        target=self.target_for_html('<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'
+            '<input autocomplete="billing address-line2" required readonly></form>')
+        with self.assertRaises(payment_browser.WriteRefused) as caught:
+            target.fill(dict(number='4242424242424242',exp_month=12,exp_year=2035,billing_address={'line2':''}))
+        self.assertEqual(caught.exception.category,'billing_unavailable')
+        self.assertEqual(caught.exception.written,2)
+
+    def test_preserved_billing_rechecks_validation_after_enabling(self):
+        target=self.target_for_html('<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'
+            '<input autocomplete="billing address-line1" disabled required pattern="[0-9]+" value="invalid"></form>')
+        self.page.frames[1].evaluate('''()=>{
+            document.querySelector('[autocomplete="cc-exp"]').onchange=()=>document.querySelector('[autocomplete="billing address-line1"]').disabled=false;
+        }''')
+        with self.assertRaises(payment_browser.WriteRefused) as caught:
+            target.fill(dict(number='4242424242424242',exp_month=12,exp_year=2035,preserve_unsupplied_billing=True))
+        self.assertEqual(caught.exception.category,'source_missing')
+        self.assertEqual(caught.exception.written,2)
+
+    def test_disabled_billing_prewrite_changes_are_sticky(self):
+        for mutation in ('zip.disabled=false', 'zip.disabled=false;zip.disabled=true',
+                'zip.readOnly=true', 'zip.autocomplete="billing tel"', 'zip.remove()',
+                'zip.replaceWith(zip.cloneNode())', 'document.body.append(zip)'):
+            with self.subTest(mutation=mutation):
+                target=self.target_for_html('<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'
+                    '<input autocomplete="postal-code" disabled></form>')
+                self.page.frames[1].evaluate('''mutation=>{
+                    const zip=document.querySelector('[autocomplete="postal-code"]');eval(mutation);
+                }''', mutation)
+                with self.assertRaises(ValueError):
+                    target.fill(dict(number='4242424242424242',exp_month=12,exp_year=2035))
+                self.assertTrue(self.page.frames[1].locator('[autocomplete="cc-number"]').evaluate('(e)=>e.value===""'))
+                target.close()
+
+    def test_dynamic_billing_wrong_origin_navigation_during_native_consent_refuses(self):
+        frame=self.page.frames[1]
+        frame.evaluate('''()=>{document.body.innerHTML='<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'+
+            '<input autocomplete="postal-code" disabled></form>';}''')
+        self.context.route('https://foreign.test/**', lambda r:r.fulfill(content_type='text/html',
+            body='<form><input autocomplete="cc-number"><input autocomplete="cc-exp"></form>'))
+        result,_=self._run_facility(before_answer=lambda:frame.goto('https://foreign.test/pay'))
+        self.assertFalse(result['success'], result)
+        self.assertEqual(result['status'],'refused')
+        self.assertEqual(result['stage'],'postconsent_target')
+        self.assertEqual(result['refusal'],'target_check_failed')
+        self.assertTrue(frame.evaluate('''()=>[...document.querySelectorAll('input')].every(e=>e.value==='')'''))
+
+    def test_dynamic_billing_cannot_disable_an_already_written_field(self):
+        target=self.target_for_html('<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'
+            '<input autocomplete="postal-code" disabled><input autocomplete="cc-name"></form>')
+        self.page.frames[1].evaluate('''()=>{
+            const zip=document.querySelector('[autocomplete="postal-code"]');
+            document.querySelector('[autocomplete="cc-number"]').oninput=()=>zip.disabled=false;
+            document.querySelector('[autocomplete="cc-name"]').oninput=()=>zip.disabled=true;
+        }''')
+        with self.assertRaises(payment_browser.WriteRefused) as caught:
+            target.fill(dict(number='4242424242424242',exp_month=12,exp_year=2035,
+                billing_address={'postal_code':'10001','name':'SYNTHETIC NAME'}))
+        self.assertEqual(caught.exception.category,'invalidated')
+        self.assertEqual(caught.exception.written,4)
+
+    def test_disabled_billing_event_window_does_not_authorize_foreign_changes(self):
+        for mutation in ('zip.autocomplete="billing tel"', 'zip.readOnly=true',
+                'zip.replaceWith(zip.cloneNode())', 'zip.remove()',
+                'zip.required=true;zip.required=false',
+                'document.querySelector("[autocomplete=cc-exp]").disabled=true',
+                'document.querySelector("[type=submit]").type="text"',
+                'zip.value="foreign"',
+                'zip.insertAdjacentHTML("afterend", "<input autocomplete=postal-code>")'):
+            with self.subTest(mutation=mutation):
+                target=self.target_for_html('<form><button hidden>Pay</button><input type="submit" hidden>'
+                    '<input autocomplete="cc-number"><input autocomplete="cc-exp">'
+                    '<input autocomplete="postal-code" disabled></form>')
+                self.page.frames[1].evaluate('''mutation=>{
+                    document.querySelector('[autocomplete="cc-number"]').oninput=()=>{
+                        const zip=document.querySelector('[autocomplete="postal-code"]');
+                        zip.disabled=false;eval(mutation);
+                    };
+                }''', mutation)
+                with self.assertRaises(payment_browser.WriteRefused) as caught:
+                    target.fill(dict(number='4242424242424242',exp_month=12,exp_year=2035,
+                        billing_address={'postal_code':'10001'}))
+                self.assertIn(caught.exception.category, ('invalidated','field_changed'))
+                self.assertEqual(caught.exception.written, 1)
+                target.close()
+
+    def test_non_data_filter_does_not_hide_unsupported_data_inputs(self):
+        for extra in (
+            '<input type="hidden" name="opaque">',
+            '<input type="text" name="other">',
+            '<input type="checkbox">',
+            '<input autocomplete="cc-number">',
+            '<textarea></textarea>',
+            '<input type="password" autocomplete="cc-csc">',
+        ):
+            with self.subTest(extra=extra):
+                with self.assertRaises(payment_browser.BindingRefused) as caught:
+                    self.target_for_html(
+                        '<form><button type="submit" hidden>Pay</button>'
+                        '<input autocomplete="cc-number"><input autocomplete="cc-exp">'
+                        + extra + '</form>'
+                    )
+                self.assertEqual(caught.exception.category, 'form_layout')
+
+    def test_generic_form_grouping_and_associated_non_data_controls(self):
+        target = self.target_for_html('''
+            <button form="payment" type="submit" hidden>Pay</button>
+            <output form="payment" hidden>Total</output>
+            <fieldset form="payment"><legend>Summary</legend></fieldset>
+            <form id="payment"><fieldset><legend>Payment</legend>
+              <input autocomplete="cc-number"><input autocomplete="cc-exp">
+              <input autocomplete="cc-csc"><input autocomplete="postal-code">
+              <button type="submit" hidden>Pay</button><output>Total</output>
+            </fieldset></form>''')
+        self.assertEqual(target.fill(dict(
+            number='4242424242424242', exp_month=12, exp_year=2035, cvc='123',
+            billing_address={'postal_code': '10001'},
+        ))['filled_fields'], 4)
+
+    def test_generic_data_control_state_and_ownership_matrix(self):
+        base = '<form id="payment"><input autocomplete="cc-number"><input autocomplete="cc-exp">{}</form>'
+        fixtures = [
+            '<form><input autocomplete="cc-number" disabled><input autocomplete="cc-exp"></form>',
+            '<form><input autocomplete="cc-number" readonly><input autocomplete="cc-exp"></form>',
+            '<form><input autocomplete="cc-number"><input autocomplete="cc-exp" disabled></form>',
+            '<form><input autocomplete="cc-number"><input autocomplete="cc-exp" readonly></form>',
+            '<form><input autocomplete="cc-number" value="4242424242424242"><input autocomplete="cc-exp"></form>',
+            '<form><input autocomplete="cc-number"><input autocomplete="cc-exp" value="12/35"></form>',
+            base.format('<input autocomplete="cc-csc" value="123">'),
+            base.format('<input autocomplete="cc-csc" disabled>'),
+            base.format('<input autocomplete="cc-csc" readonly>'),
+            base.format('<input autocomplete="postal-code" hidden>'),
+            base.format('<input autocomplete="postal-code"><input autocomplete="billing postal-code">'),
+            base.format('') + '<input autocomplete="postal-code">',
+            base.format('') + '<input autocomplete="postal-code" form="payment">',
+            '<form><fieldset disabled><input autocomplete="cc-number"><input autocomplete="cc-exp"></fieldset></form>',
+        ]
+        for html in fixtures:
+            with self.subTest(html=html):
+                with self.assertRaises(payment_browser.BindingRefused) as caught:
+                    self.target_for_html(html)
+                self.assertIn(caught.exception.category, ('form_layout', 'frame_lineage'))
+
+    def test_ignored_action_input_cannot_become_data_after_binding(self):
+        for restore in (False, True):
+            with self.subTest(restore=restore):
+                target = self.target_for_html(
+                    '<form><input autocomplete="cc-number"><input autocomplete="cc-exp">'
+                    '<input type="submit" hidden></form>'
+                )
+                self.page.frames[1].evaluate('''restore => {
+                    const action=document.querySelector('[type="submit"]');
+                    action.type='text';
+                    if(restore)action.type='submit';
+                }''', restore)
+                with self.assertRaises(ValueError):
+                    target.check()
+                target.close()
+
     def test_writer_initial_mismatch_reaches_native_result_without_values(self):
         self.page.frames[1].evaluate('''document.body.innerHTML=
             '<form><input autocomplete="cc-number"><input autocomplete="cc-exp">' +
@@ -171,7 +485,7 @@ class PaymentBrowserTests(unittest.TestCase):
         })
         self.assertEqual(result, {
             "success": False, "status": "write_unknown", "stage": "write",
-            "payment_diagnostic_version": "0.5.7",
+            "payment_diagnostic_version": "0.5.8",
             "refusal": "initial_mismatch", "field": "cc-name", "written_fields": 0,
         })
 
@@ -328,7 +642,7 @@ class PaymentBrowserTests(unittest.TestCase):
                     status="refused",
                     stage="target_binding",
                     refusal=category,
-                    payment_diagnostic_version="0.5.7",
+                    payment_diagnostic_version="0.5.8",
                 ),
             )
 
@@ -786,7 +1100,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 success=True,
                 status="filled",
                 filled_fields=4,
-                payment_diagnostic_version="0.5.7",
+                payment_diagnostic_version="0.5.8",
             ),
         )
         for metadata in card["billing_address"].values():
@@ -1078,7 +1392,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 "success": True,
                 "status": "filled",
                 "filled_fields": 4,
-                "payment_diagnostic_version": "0.5.7",
+                "payment_diagnostic_version": "0.5.8",
             },
         )
         self.assertIn("https://merchant.test", prompts[0]["command"])
@@ -1166,7 +1480,7 @@ class PaymentBrowserTests(unittest.TestCase):
             {
                 "success": False,
                 "status": "payment_declined",
-                "payment_diagnostic_version": "0.5.7",
+                "payment_diagnostic_version": "0.5.8",
             },
         )
         self.assertEqual(

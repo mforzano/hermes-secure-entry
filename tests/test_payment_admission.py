@@ -112,7 +112,7 @@ class PaymentAdmissionTests(unittest.TestCase):
                 if failure == "private_owner":
                     self.assertEqual(result.get("private_object"), "file")
                     self.assertEqual(result.get("owner_class"), "other")
-                self.assertEqual(result.get("payment_diagnostic_version"), "0.5.7")
+                self.assertEqual(result.get("payment_diagnostic_version"), "0.5.8")
                 self.assertEqual(
                     result.get("subprocess_exit_status"),
                     7 if failure == "producer" else None,

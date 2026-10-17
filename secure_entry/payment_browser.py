@@ -38,7 +38,13 @@ CHILD = r"""(() => {
  const forms=Array.from(doc.forms);
  if(forms.length>1)throw Error('unsupported');
  const form=forms[0] || null;
- const fields=Array.from(form ? form.elements : doc.querySelectorAll('input,select,textarea'));
+ // Action, grouping and derived-output controls are not data-entry targets.
+ // Apply the same inventory filter globally so unsupported data inputs outside
+ // the form still refuse. Unknown form-associated control types stay rejected.
+ const dataControl=e=>!['BUTTON','FIELDSET','OUTPUT'].includes(e.tagName) &&
+   !(e.tagName==='INPUT' && ['submit','reset','button','image'].includes(e.type));
+ const documentFields=Array.from(doc.querySelectorAll('input,select,textarea')).filter(dataControl);
+ const fields=form ? Array.from(form.elements).filter(dataControl) : documentFields;
  // A null form owner alone is not a group. Retain the smallest common
  // non-document container; sibling widgets joined only by body/html refuse.
  let container=form || (fields[0] && fields[0].parentElement);
@@ -55,16 +61,22 @@ CHILD = r"""(() => {
  // Retain the original descriptors for authority checks; never edit page attributes.
  const autocomplete=fields.map(e=>e.autocomplete);
  const tokens=autocomplete.map(t=>t==='postal-code'?'billing postal-code':t);
- if(doc.querySelectorAll('input,select,textarea').length!==fields.length ||
+ if(documentFields.length!==fields.length ||
    fields.some((e,i)=>!['INPUT','SELECT'].includes(e.tagName) || !allowed.includes(tokens[i]) ||
      (e.tagName==='SELECT' && !['billing country','billing address-level1'].includes(e.autocomplete))) ||
    new Set(tokens).size!==tokens.length || !tokens.includes('cc-number') ||
    (tokens.includes('cc-exp') ? tokens.includes('cc-exp-month') || tokens.includes('cc-exp-year') :
      !tokens.includes('cc-exp-month') || !tokens.includes('cc-exp-year')))throw Error('unsupported');
- const usable=e=>!e.disabled && !e.readOnly && !['hidden','password','checkbox','radio','file','submit','button'].includes(e.type) &&
+ const credential=i=>tokens[i].startsWith('cc-') && tokens[i]!=='cc-name';
+ const visible=e=>!['hidden','password','checkbox','radio','file','submit','button'].includes(e.type) &&
    e.getClientRects().length && getComputedStyle(e).visibility==='visible';
- if(fields.some((e,i)=>!usable(e) || (tokens[i].startsWith('cc-') && tokens[i]!=='cc-name' && e.value)))throw Error('unsupported');
+ const disabled=fields.map(e=>e.matches(':disabled'));
+ const readonly=fields.map(e=>!!e.readOnly);
+ // Billing availability is not credential authority. Retain even unavailable
+ // billing nodes; never admit unavailable or prefilled PAN/expiry/CVC.
+ if(fields.some((e,i)=>!visible(e) || (credential(i) && (disabled[i] || readonly[i] || e.value))))throw Error('unsupported');
  const initial=fields.map(e=>e.value);
+ const initiallyDisabled=disabled.slice(), settled=new Set();
  let changed=false, used=false;
  // Retain every control/group ancestor, not unrelated presentation subtrees.
  // Mutation records make removal/reparent and security changes sticky even if
@@ -78,10 +90,21 @@ CHILD = r"""(() => {
  // attribute. Keep exact semantic PAN/expiry invariants, including every queued
  // intermediate attribute value (oldValue reconstructs synchronous restoration).
  let reflection=null;
+ const mayTransition=i=>reflection!==null && initiallyDisabled[i] && !credential(i) && !settled.has(i);
+ const billingStateRecord=r=>{
+   if(!reflection || r.attributeName!=='disabled')return false;
+   const legend=r.target.tagName==='FIELDSET' ? Array.from(r.target.children).find(e=>e.tagName==='LEGEND') : null;
+   const affected=fields.map((e,i)=>e===r.target ||
+     (r.target.tagName==='FIELDSET' && r.target.contains(e) && !(legend && legend.contains(e))) ? i : -1).filter(i=>i>=0);
+   return affected.length>0 && affected.every(mayTransition);
+ };
  const reflects=(v,i,want)=>v===want || (tokens[i]==='cc-number' &&
    /^[0-9]+(?:[ -][0-9]+)*$/.test(v) && v.replace(/[ -]/g,'')===want) ||
    (tokens[i]==='cc-exp' && /^[0-9]{2} *\/ *[0-9]{2}$/.test(v) && v.replace(/ /g,'')===want);
  const securityRecords=records=>records.some((r,k)=>{
+   // An excluded action INPUT must not turn into an unretained data control,
+   // even if its type is restored before the next check.
+   if(r.type==='attributes' && r.attributeName==='type' && r.target.tagName==='INPUT')return true;
    if(r.type==='attributes' && r.attributeName==='value' && reflection &&
      r.target===fields[reflection.i] && r.target.tagName==='INPUT'){
      const next=records.slice(k+1).find(n=>n.type==='attributes' && n.target===r.target && n.attributeName==='value');
@@ -89,6 +112,7 @@ CHILD = r"""(() => {
      return value===null || !reflects(value,reflection.i,reflection.value) ||
        !reflects(r.target.value,reflection.i,reflection.value);
    }
+   if(r.type==='attributes' && billingStateRecord(r))return false;
    if(r.type==='attributes')return (retained.has(r.target) ||
      selects.some(e=>e.contains(r.target)) || r.target.tagName==='BASE') &&
      !['class','aria-invalid','aria-describedby','aria-errormessage'].includes(r.attributeName);
@@ -99,8 +123,13 @@ CHILD = r"""(() => {
  const observer=new MutationObserver(records=>{if(securityRecords(records))changed=true;});
  observer.observe(doc,{subtree:true,childList:true,attributes:true,attributeOldValue:true,characterData:true});
  const valid=()=>{if(securityRecords(observer.takeRecords()))changed=true;
+   fields.forEach((e,i)=>{
+     const state=e.matches(':disabled');
+     if(state!==disabled[i]){if(!mayTransition(i))changed=true;else disabled[i]=state;}
+     if(!!e.readOnly!==readonly[i])changed=true;
+   });
    return !changed && document===doc && location.href===href && location.origin===origin &&
-     container.isConnected && container.ownerDocument===doc && fields.every((e,i)=>e.isConnected && e.form===form && container.contains(e) && e.parentNode===parents[i] && e.ownerDocument===doc && usable(e) && e.autocomplete===autocomplete[i]);};
+     container.isConnected && container.ownerDocument===doc && fields.every((e,i)=>e.isConnected && e.form===form && container.contains(e) && e.parentNode===parents[i] && e.ownerDocument===doc && visible(e) && e.autocomplete===autocomplete[i]);};
  const setters={INPUT:Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set,
    SELECT:Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set};
  return {valid, origin,
@@ -111,27 +140,48 @@ CHILD = r"""(() => {
      // unsupplied billing controls, including blank optional line2, in this mode.
      // Supplied identity (name/postal) still must match; Link keeps issued billing.
      values.forEach((v,i)=>{if(v===undefined && tokens[i].startsWith('billing ') &&
-       card.preserve_unsupplied_billing===true && fields[i].checkValidity())values[i]=initial[i];});
+       card.preserve_unsupplied_billing===true && fields[i].checkValidity() &&
+       (!fields[i].required || initial[i].trim()!==''))values[i]=initial[i];});
      values.forEach((v,i)=>{if(tokens[i]==='billing tel' && v===undefined)values[i]=initial[i] || undefined;});
      let written=0;
      const refuse=(reason,i)=>({written,valid:false,reason,...(i>=0?{field:tokens[i]}:{})});
      if(used)return refuse('already_used');
      if(!valid())return refuse('invalidated');
-     let index=values.findIndex(v=>typeof v!=='string');
+     const unavailable=i=>fields[i].matches(':disabled') || !!fields[i].readOnly;
+     const skippable=i=>!credential(i) && unavailable(i) && !fields[i].required;
+     const skipped=[];
+     let index=values.findIndex((v,i)=>typeof v!=='string' && !skippable(i));
      if(index>=0)return refuse('source_missing',index);
      index=fields.findIndex((e,i)=>e.value!==initial[i]);
      if(index>=0)return refuse('field_changed',index);
      index=fields.findIndex((e,i)=>initial[i] && initial[i]!==values[i]);
      if(index>=0)return refuse('initial_mismatch',index);
-     index=fields.findIndex((e,i)=>e.tagName==='SELECT' &&
+     index=fields.findIndex((e,i)=>e.tagName==='SELECT' && !unavailable(i) &&
        Array.from(e.options).filter(o=>o.value===values[i] && !o.disabled && !o.parentElement.disabled).length!==1);
      if(index>=0)return refuse('select_mismatch',index);
      used=true;
      const expected=initial.slice();
-     for(let i=0;i<fields.length;i++){
+     // Dependencies may enable billing on expiry/CVC, not only on PAN. Process
+     // credential events first, then settle billing against its current state.
+     const order=fields.map((e,i)=>i).sort((a,b)=>Number(credential(b))-Number(credential(a)));
+     while(order.length){
+       const next=order.findIndex(i=>!unavailable(i));
+       const i=order.splice(next<0?0:next,1)[0];
        if(!valid())return refuse('invalidated');
        index=fields.findIndex((e,j)=>e.value!==expected[j]);
        if(index>=0)return refuse('field_changed',index);
+       if(unavailable(i)){
+         if(!fields[i].matches(':disabled') && fields[i].value===values[i] &&
+           (!fields[i].required || fields[i].value.trim()!=='')){settled.add(i);continue;}
+         if(!skippable(i))return refuse('billing_unavailable',i);
+         skipped.push(tokens[i]);continue;
+       }
+       if(typeof values[i]!=='string')return refuse('source_missing',i);
+       if(card.preserve_unsupplied_billing===true && tokens[i].startsWith('billing ') &&
+         card[tokens[i]]===undefined && !fields[i].checkValidity())return refuse('source_missing',i);
+       if(fields[i].tagName==='SELECT' && Array.from(fields[i].options).filter(o=>
+         o.value===values[i] && !o.disabled && !o.parentElement.disabled).length!==1)return refuse('select_mismatch',i);
+       settled.add(i);
        if(fields[i].value===values[i])continue;
        reflection={i,value:values[i]};
        try {
@@ -150,7 +200,7 @@ CHILD = r"""(() => {
      if(!valid())return refuse('invalidated');
      index=fields.findIndex((e,i)=>e.value!==expected[i]);
      if(index>=0)return refuse('field_changed',index);
-     return {written,valid:true};},
+     return {written,valid:true,skipped};},
    close(){changed=true;observer.disconnect();}};
 })()"""
 
@@ -161,6 +211,7 @@ class WriteRefused(ValueError):
     CATEGORIES = frozenset({
         "initial_mismatch", "source_missing", "field_changed", "invalidated",
         "select_mismatch", "unchanged", "expiry_format", "write_mismatch", "already_used",
+        "billing_unavailable",
     })
     TOKENS = frozenset({
         "cc-number", "cc-exp", "cc-exp-month", "cc-exp-year", "cc-csc", "cc-name",
@@ -430,7 +481,16 @@ class Target:
             or result["written"] < 2
         ):
             raise WriteRefused(result if isinstance(result, dict) else {})
-        return {"success": True, "status": "filled", "filled_fields": result["written"]}
+        response = {"success": True, "status": "filled", "filled_fields": result["written"]}
+        skipped = result.get("skipped", [])
+        if skipped:
+            if not isinstance(skipped, list) or any(
+                not isinstance(token, str) or token not in WriteRefused.TOKENS
+                for token in skipped
+            ):
+                raise WriteRefused({})
+            response["skipped_optional_fields"] = skipped
+        return response
 
     def close(self):
         self.closed = True

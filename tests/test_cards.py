@@ -52,7 +52,10 @@ class CardTests(unittest.TestCase):
         self.assertEqual(len(self.store.list_items()), 1)
         return status['handle']
 
-    def test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(self):
+    def test_saved_native_card_dynamic_disabled_billing_through_registered_facility(self):
+        self.test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(dynamic_billing=True)
+
+    def test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(self, dynamic_billing=False):
         from test_payment_browser import PaymentBrowserTests
         from tools import approval
         handle = self.save_card()
@@ -65,6 +68,13 @@ class CardTests(unittest.TestCase):
                 const i=document.createElement('input'); i.autocomplete=a; f.append(i);
             }
         }""")
+        if dynamic_billing:
+            fixture.page.frames[1].evaluate('''()=>{
+                const zip=document.querySelector('[autocomplete="billing postal-code"]');
+                zip.disabled=true;zip.required=true;
+                document.querySelector('form').insertAdjacentHTML('afterbegin','<button type="submit" hidden>Pay</button>');
+                document.querySelector('[autocomplete="cc-csc"]').onchange=()=>zip.disabled=false;
+            }''')
         prompts = []
         def notify(data):
             prompts.append(data)
