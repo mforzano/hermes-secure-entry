@@ -171,7 +171,7 @@ class PaymentBrowserTests(unittest.TestCase):
         })
         self.assertEqual(result, {
             "success": False, "status": "write_unknown", "stage": "write",
-            "payment_diagnostic_version": "0.5.4",
+            "payment_diagnostic_version": "0.5.5",
             "refusal": "initial_mismatch", "field": "cc-name", "written_fields": 0,
         })
 
@@ -328,7 +328,7 @@ class PaymentBrowserTests(unittest.TestCase):
                     status="refused",
                     stage="target_binding",
                     refusal=category,
-                    payment_diagnostic_version="0.5.4",
+                    payment_diagnostic_version="0.5.5",
                 ),
             )
 
@@ -416,6 +416,68 @@ class PaymentBrowserTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             target.check()
+
+    def test_unsectioned_postal_code_with_combined_expiry_mask(self):
+        target = self.target_for_html(
+            '<div><input type="text" autocomplete="cc-number">'
+            '<input type="text" autocomplete="cc-exp">'
+            '<input type="text" autocomplete="cc-csc">'
+            '<input type="text" autocomplete="postal-code"></div>'
+        )
+        frame = self.page.frames[1]
+        before = frame.locator('input').evaluate_all(
+            'fields => fields.map(e => e.getAttribute("autocomplete"))'
+        )
+        frame.evaluate('''() => {
+          const e=document.querySelector('[autocomplete=cc-exp]');
+          e.addEventListener('input',()=>{e.value=e.value.replace('/', ' / ')});
+        }''')
+        result = target.fill(dict(number="4242424242424242", exp_month=12,
+            exp_year=2035, cvc="987", billing_address={"postal_code":"10001"}))
+        self.assertEqual(result['filled_fields'], 4)
+        self.assertEqual(frame.locator('[autocomplete=cc-exp]').input_value(), '12 / 35')
+        self.assertEqual(frame.locator('[autocomplete=cc-csc]').input_value(), '987')
+        self.assertEqual(frame.locator('[autocomplete=postal-code]').input_value(), '10001')
+        self.assertEqual(frame.locator('input').evaluate_all(
+            'fields => fields.map(e => e.getAttribute("autocomplete"))'), before)
+
+    def test_unsectioned_postal_code_keeps_strict_control_admission(self):
+        for extra in (
+            '<input autocomplete="postal-code"><input autocomplete="billing postal-code">',
+            '<input autocomplete="postal-code"><input autocomplete="postal-code">',
+            '<input autocomplete="shipping postal-code">',
+            '<input autocomplete="section-other postal-code">',
+            '<input autocomplete="country">',
+            '<input autocomplete="address-line1">',
+            '<input autocomplete="postal-code" type="hidden">',
+            '<select autocomplete="postal-code"><option>10001</option></select>',
+            '<textarea autocomplete="postal-code"></textarea>',
+        ):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                self.target_for_html('<div><input autocomplete="cc-number">'
+                    '<input autocomplete="cc-exp"><input autocomplete="cc-csc">'+extra+'</div>')
+
+    def test_unsectioned_postal_code_retains_original_attribute_authority(self):
+        target = self.target_for_html('<div><input autocomplete="cc-number">'
+            '<input autocomplete="cc-exp"><input autocomplete="postal-code"></div>')
+        self.page.frames[1].evaluate('''() => {
+          const e=document.querySelector('[autocomplete=postal-code]');
+          e.autocomplete='billing postal-code';
+          e.autocomplete='postal-code';
+        }''')
+        with self.assertRaises(ValueError):
+            target.check()
+        self.assertEqual(self.page.frames[1].locator('[autocomplete=cc-number]').input_value(), '')
+
+    def test_unsectioned_postal_code_conflict_uses_canonical_diagnostic(self):
+        target = self.target_for_html('<div><input autocomplete="cc-number">'
+            '<input autocomplete="cc-exp"><input autocomplete="postal-code" value="99999"></div>')
+        with self.assertRaises(payment_browser.WriteRefused) as caught:
+            target.fill(dict(number="4242424242424242", exp_month=12,
+                exp_year=2035, billing_address={"postal_code":"10001"}))
+        self.assertEqual(caught.exception.category, 'initial_mismatch')
+        self.assertEqual(caught.exception.field, 'billing postal-code')
+        self.assertEqual(caught.exception.written, 0)
 
     def test_combined_expiry_input_mask_preserves_exact_month_and_year(self):
         target = self.target_for_html(
@@ -724,7 +786,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 success=True,
                 status="filled",
                 filled_fields=4,
-                payment_diagnostic_version="0.5.4",
+                payment_diagnostic_version="0.5.5",
             ),
         )
         self.assertNotIn(
@@ -1019,7 +1081,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 "success": True,
                 "status": "filled",
                 "filled_fields": 4,
-                "payment_diagnostic_version": "0.5.4",
+                "payment_diagnostic_version": "0.5.5",
             },
         )
         self.assertIn("https://merchant.test", prompts[0]["command"])
@@ -1107,7 +1169,7 @@ class PaymentBrowserTests(unittest.TestCase):
             {
                 "success": False,
                 "status": "payment_declined",
-                "payment_diagnostic_version": "0.5.4",
+                "payment_diagnostic_version": "0.5.5",
             },
         )
         self.assertEqual(

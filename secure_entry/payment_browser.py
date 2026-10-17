@@ -51,9 +51,12 @@ CHILD = r"""(() => {
  const allowed=['cc-number','cc-exp','cc-exp-month','cc-exp-year','cc-csc','cc-name',
    'billing country','billing address-line1','billing address-line2','billing address-level2',
    'billing address-level1','billing postal-code','billing tel'];
- const tokens=fields.map(e=>e.autocomplete);
+ // Canonicalize only the standard unsectioned postal token for billing lookup.
+ // Retain the original descriptors for authority checks; never edit page attributes.
+ const autocomplete=fields.map(e=>e.autocomplete);
+ const tokens=autocomplete.map(t=>t==='postal-code'?'billing postal-code':t);
  if(doc.querySelectorAll('input,select,textarea').length!==fields.length ||
-   fields.some(e=>!['INPUT','SELECT'].includes(e.tagName) || !allowed.includes(e.autocomplete) ||
+   fields.some((e,i)=>!['INPUT','SELECT'].includes(e.tagName) || !allowed.includes(tokens[i]) ||
      (e.tagName==='SELECT' && !['billing country','billing address-level1'].includes(e.autocomplete))) ||
    new Set(tokens).size!==tokens.length || !tokens.includes('cc-number') ||
    (tokens.includes('cc-exp') ? tokens.includes('cc-exp-month') || tokens.includes('cc-exp-year') :
@@ -97,7 +100,7 @@ CHILD = r"""(() => {
  observer.observe(doc,{subtree:true,childList:true,attributes:true,attributeOldValue:true,characterData:true});
  const valid=()=>{if(securityRecords(observer.takeRecords()))changed=true;
    return !changed && document===doc && location.href===href && location.origin===origin &&
-     container.isConnected && container.ownerDocument===doc && fields.every((e,i)=>e.isConnected && e.form===form && container.contains(e) && e.parentNode===parents[i] && e.ownerDocument===doc && usable(e) && e.autocomplete===tokens[i]);};
+     container.isConnected && container.ownerDocument===doc && fields.every((e,i)=>e.isConnected && e.form===form && container.contains(e) && e.parentNode===parents[i] && e.ownerDocument===doc && usable(e) && e.autocomplete===autocomplete[i]);};
  const setters={INPUT:Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set,
    SELECT:Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set};
  return {valid, origin,

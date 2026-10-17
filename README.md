@@ -1,5 +1,7 @@
 # Hermes Secure Entry
 
+**0.5.5 standard postal-code support:** the native Link/card writer maps only unsectioned `postal-code` to billing postal code internally, retaining original page attributes and document/control/origin authority. Real isolated Chrome regressions cover masked combined expiry, CVC and ZIP, duplicate aliases and invalid controls, sticky attribute changes, and canonical conflict diagnostics. No live payment was used for this validation.
+
 **0.5.4 framework value-reflection fix:** permit only the current retained INPUT's exact-semantic self-write reflection, including normal PAN/expiry formatting; prewrite, foreign-field and mismatched/restored mutations still refuse. [Tests and limits](docs/payment-widget-054.md).
 
 **0.5.3 widget-mutation fix:** tolerate card-brand/validation presentation updates after PAN input while retaining sticky control/ancestry/security-semantic mutation refusal. Supplied name/postal mismatch policy remains unchanged. [Tests and limits](docs/payment-widget-053.md). [Value-free diagnostics](docs/payment-writer-052.md).
