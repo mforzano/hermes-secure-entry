@@ -763,7 +763,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 dict(number="4242424242424242", exp_month=12, exp_year=2030, cvc="123")
             )
 
-    def test_native_issued_billing_redacted_individually_before_fill(self):
+    def test_native_issued_billing_is_not_registered_as_payment_secrets(self):
         from agent.redact import redact_registered_vault_values
 
         self.page.frames[1].evaluate(
@@ -789,15 +789,12 @@ class PaymentBrowserTests(unittest.TestCase):
                 payment_diagnostic_version="0.5.5",
             ),
         )
-        self.assertNotIn(
-            "Unique Synthetic Cardholder",
-            redact_registered_vault_values("Unique Synthetic Cardholder"),
+        for metadata in card["billing_address"].values():
+            self.assertEqual(redact_registered_vault_values(metadata), metadata)
+        self.assertEqual(
+            redact_registered_vault_values("4242424242424242 12/30"),
+            "«redacted-vault-secret» «redacted-vault-secret»",
         )
-        self.assertNotIn(
-            "1 Private Synthetic Street",
-            redact_registered_vault_values("1 Private Synthetic Street"),
-        )
-        self.assertNotIn("12/30", redact_registered_vault_values("12/30"))
 
     def test_matching_prefilled_cardholder_is_preserved(self):
         target = self.target_for_html(

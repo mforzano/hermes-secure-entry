@@ -132,7 +132,7 @@ class LocalPayment:
             from tools.interrupt import is_interrupted
             from tools.approval_prompt import request_elicitation_consent
             from tools.approval_human_wait import human_wait_seconds
-            from agent.redact import register_vault_redaction_value
+            from agent.redact import register_payment_redaction_values
 
             if (
                 isolation_mode() != "in_process"
@@ -240,23 +240,12 @@ class LocalPayment:
                         target.check()
                         stage = "private_file"
                         card = inbox.consume(rid, merchant)
-                for value in [
-                        *card.values(),
-                        *card.get("billing_address", {}).values(),
-                        f"{card['exp_month']:02d}/{card['exp_year'] % 100:02d}",
-                ]:
-                    # bool is an int subclass; adapter policy is not a secret.
-                    if type(value) in (str, int) and str(value):
-                        register_vault_redaction_value(str(value))
-                # Cover common formatting if a subsequent browser read echoes
-                # a number with spaces/dashes, not just its original digits.
-                number = card["number"]
-                for sep in (" ", "-"):
-                    register_vault_redaction_value(
-                        sep.join(
-                            number[i : i + 4] for i in range(0, len(number), 4)
-                        )
-                    )
+                # Both sources use `number`; the core helper uses `card_number`.
+                # Never register billing metadata or standalone expiry fragments.
+                register_payment_redaction_values({
+                    "card_number": card["number"], "cvc": card.get("cvc"),
+                    "exp_month": card["exp_month"], "exp_year": card["exp_year"],
+                })
                 current()
                 stage = "write"
                 return target.fill(card)

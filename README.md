@@ -1,5 +1,7 @@
 # Hermes Secure Entry
 
+**0.5.6 payment redaction fix:** register PAN, CVC and complete expiry variants by field rather than registering every card/billing value as a password-like substring. Standalone expiry month/year and billing metadata are not globally masked, so a single-digit month cannot corrupt private-entry URLs. Password/OTP matching and PAN/CVC protection are unchanged. Requires the core `agent.redact.register_payment_redaction_values` helper; installing this plugin without that helper is unsupported. Existing bad registrations in an already-running gateway require a restart; source installation alone does not clear them. Synthetic add-card, saved-card-fill and Link-fill regressions cover URL preservation and credential masking; live delivery after restart remains a separate gate.
+
 **0.5.5 standard postal-code support:** the native Link/card writer maps only unsectioned `postal-code` to billing postal code internally, retaining original page attributes and document/control/origin authority. Real isolated Chrome regressions cover masked combined expiry, CVC and ZIP, duplicate aliases and invalid controls, sticky attribute changes, and canonical conflict diagnostics. No live payment was used for this validation.
 
 **0.5.4 framework value-reflection fix:** permit only the current retained INPUT's exact-semantic self-write reflection, including normal PAN/expiry formatting; prewrite, foreign-field and mismatched/restored mutations still refuse. [Tests and limits](docs/payment-widget-054.md).

@@ -92,18 +92,18 @@ def add_login(store, origin, fields):
 def add_card(store, origin, fields):
     """Public native payment API only; its established schema persists CVC."""
     import re
-    from agent.redact import register_vault_redaction_value
+    from agent.redact import register_payment_redaction_values
     validate_origin(origin)
     if (not re.fullmatch(r'[0-9]{12,19}', fields['card_number'])
             or not re.fullmatch(r'[0-9]{3,4}', fields['cvc'])
             or not re.fullmatch(r'(0?[1-9]|1[0-2])', fields['exp_month'])
             or not re.fullmatch(r'20[0-9]{2}', fields['exp_year'])):
         return {'status': 'invalid_input'}
-    for value in fields.values():
-        register_vault_redaction_value(value)
-    number = fields['card_number']
-    for sep in (' ', '-'):
-        register_vault_redaction_value(sep.join(number[i:i+4] for i in range(0, len(number), 4)))
+    # Canonical secret fields only: expiry fragments and billing are not secrets.
+    register_payment_redaction_values({
+        'card_number': fields['card_number'], 'cvc': fields['cvc'],
+        'exp_month': fields['exp_month'], 'exp_year': fields['exp_year'],
+    })
     result = {'status': 'commit_unknown'}
     try:
         meta = store.add_item('payment', urlsplit(origin).netloc, fields, origin=origin)
