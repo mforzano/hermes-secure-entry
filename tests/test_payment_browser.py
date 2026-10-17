@@ -149,6 +149,9 @@ class PaymentBrowserTests(unittest.TestCase):
 
     def target_for_html(self, html):
         self.page.frames[1].evaluate("html => document.body.innerHTML=html", html)
+        return self.target_for_current_widget()
+
+    def target_for_current_widget(self):
         target = payment_browser.Target(
             self.capture,
             self.parent,
@@ -187,6 +190,135 @@ class PaymentBrowserTests(unittest.TestCase):
                 self.assertTrue(self.page.frames[1].evaluate('''() =>
                     [...document.querySelectorAll('input')]
                       .filter(e => e.autocomplete).every(e => e.value.length > 0)'''))
+                target.close()
+
+    def install_brand_validation_widget(self):
+        """Observed mutation categories together, without merchant-specific code."""
+        self.page.frames[1].evaluate('''() => {
+            document.body.innerHTML='<form><button type="submit" hidden>Pay</button><div class="group">' +
+                '<div class="brand"><span>Unknown card</span></div>' +
+                '<input autocomplete="cc-number" maxlength="23"><input autocomplete="cc-exp">' +
+                '<input autocomplete="cc-csc" maxlength="4"><input autocomplete="cc-name">' +
+                '<input autocomplete="postal-code" required disabled></div></form>';
+            const group=document.querySelector('.group'), brand=document.querySelector('.brand');
+            const pan=document.querySelector('[autocomplete="cc-number"]');
+            pan.oninput=()=>{
+                pan.maxLength=19;
+                pan.minLength=12;
+                const cvc=document.querySelector('[autocomplete="cc-csc"]');
+                cvc.maxLength=3;cvc.minLength=3;
+                pan.value=pan.value.match(/.{1,4}/g).join(' ');
+                pan.setAttribute('value',pan.value);
+                document.querySelector('form').className='validated';
+                group.setAttribute('role','group');
+                group.setAttribute('aria-label','Card details');
+                group.setAttribute('aria-hidden','false');
+                group.className='group recognized';
+                brand.replaceChildren(Object.assign(document.createElement('span'),{textContent:'Recognized card'}));
+                brand.setAttribute('role','status');brand.setAttribute('aria-live','polite');
+                pan.setAttribute('aria-describedby','card-status');
+                document.querySelector('[autocomplete="postal-code"]').disabled=false;
+            };
+            document.querySelector('[autocomplete="cc-exp"]').oninput=e=>{
+                e.target.value=e.target.value.replace('/',' / ');
+                e.target.setAttribute('value',e.target.value);
+            };
+        }''')
+
+    def test_native_facility_brand_constraints_and_accessibility_presentation(self):
+        self.install_brand_validation_widget()
+        result, _ = self._run_facility(issued_card=dict(
+            number='4242424242424242', cvc='123', exp_month=12, exp_year=2035,
+            billing_address={'postal_code':'10001', 'name':'SYNTHETIC CARDHOLDER'},
+        ))
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['filled_fields'], 5)
+        self.assertTrue(self.page.frames[1].evaluate('''()=>{
+            const inputs=[...document.querySelectorAll('input')];
+            return inputs.every(e=>e.value.length>0 && !e.matches(':disabled')) &&
+                inputs[0].value==='4242 4242 4242 4242' && inputs[1].value==='12 / 35' &&
+                inputs[2].value==='123' && inputs[4].value==='10001';
+        }'''))
+
+    def test_brand_widget_keeps_destination_and_control_mutations_sticky(self):
+        mutations = (
+            "n.name='other'; n.removeAttribute('name')",
+            "n.type='tel'; n.removeAttribute('type')",
+            "n.autocomplete='cc-name'; n.autocomplete='cc-number'",
+            "n.setAttribute('form','other'); n.removeAttribute('form')",
+            "n.disabled=true; n.disabled=false",
+            "n.readOnly=true; n.readOnly=false",
+            "f.action='https://foreign.test/pay'; f.removeAttribute('action')",
+            "g.setAttribute('aria-owns','other'); g.removeAttribute('aria-owns')",
+            "n.setAttribute('role','textbox'); n.removeAttribute('role')",
+            "n.replaceWith(n.cloneNode(true))",
+            "g.remove(); f.append(g)",
+            "f.append(n); g.append(n)",
+            "g.insertAdjacentHTML('beforeend','<input autocomplete=cc-number>')",
+            "g.insertAdjacentHTML('beforeend','<input name=unsupported>')",
+            "document.head.append(document.createElement('base'))",
+        )
+        for when in ('prewrite', 'selfwrite'):
+            for mutation in mutations:
+                with self.subTest(when=when, mutation=mutation):
+                    self.install_brand_validation_widget()
+                    target=self.target_for_current_widget()
+                    self.page.frames[1].evaluate('''({when,mutation})=>{
+                        const n=document.querySelector('[autocomplete="cc-number"]');
+                        const f=document.querySelector('form'), g=document.querySelector('.group');
+                        if(when==='prewrite')eval(mutation);
+                        else {const normal=n.oninput; n.oninput=()=>{normal();eval(mutation);};}
+                    }''', dict(when=when, mutation=mutation))
+                    result=target.invoke(target.csid,target.cg,'function(v){return this.write(v);}', ({
+                        'cc-number':'4242424242424242','cc-exp':'12/35','cc-csc':'123',
+                        'cc-name':'SYNTHETIC CARDHOLDER','billing postal-code':'10001',
+                    },))
+                    self.assertFalse(result['valid'], result)
+                    self.assertEqual(result['written'], 0 if when=='prewrite' else 1)
+                    target.close()
+
+    def test_brand_widget_length_and_accessibility_changes_are_selfwrite_only(self):
+        for mutation in (
+            "n.maxLength=19; n.maxLength=23",
+            "n.minLength=12; n.removeAttribute('minlength')",
+            "g.setAttribute('aria-label','Other'); g.removeAttribute('aria-label')",
+            "g.setAttribute('aria-hidden','true'); g.removeAttribute('aria-hidden')",
+            "g.setAttribute('role','group'); g.removeAttribute('role')",
+        ):
+            with self.subTest(mutation=mutation):
+                self.install_brand_validation_widget()
+                target=self.target_for_current_widget()
+                self.page.frames[1].evaluate('''mutation=>{
+                    const n=document.querySelector('input'),g=document.querySelector('.group');eval(mutation);
+                }''', mutation)
+                with self.assertRaises(ValueError):
+                    target.check()
+                target.close()
+
+    def test_brand_widget_never_accepts_truncation_foreign_values_or_actual_hiding(self):
+        for mutation in (
+            "n.maxLength=15; n.value=n.value.slice(0,15)",
+            "document.querySelector('[autocomplete=cc-csc]').value='foreign'",
+            "g.classList.add('invisible')",
+            "g.setAttribute('aria-hidden','true')",
+        ):
+            with self.subTest(mutation=mutation):
+                self.install_brand_validation_widget()
+                self.page.frames[1].evaluate('''()=>{
+                    const s=document.createElement('style');
+                    s.textContent='.invisible {display:none} .group[aria-hidden="true"] {visibility:hidden}';
+                    document.head.append(s);
+                }''')
+                target=self.target_for_current_widget()
+                self.page.frames[1].evaluate('''mutation=>{
+                    const n=document.querySelector('input'),g=document.querySelector('.group');
+                    const normal=n.oninput;n.oninput=()=>{normal();eval(mutation);};
+                }''', mutation)
+                with self.assertRaises(payment_browser.WriteRefused) as caught:
+                    target.fill(dict(number='4242424242424242',cvc='123',exp_month=12,exp_year=2035,
+                        billing_address={'name':'SYNTHETIC CARDHOLDER','postal_code':'10001'}))
+                self.assertIn(caught.exception.category, ('invalidated','field_changed','write_mismatch'))
+                self.assertEqual(caught.exception.written,1)
                 target.close()
 
     def test_native_facility_enables_retained_billing_during_pan_event(self):
@@ -485,7 +617,7 @@ class PaymentBrowserTests(unittest.TestCase):
         })
         self.assertEqual(result, {
             "success": False, "status": "write_unknown", "stage": "write",
-            "payment_diagnostic_version": "0.5.8",
+            "payment_diagnostic_version": "0.5.9",
             "refusal": "initial_mismatch", "field": "cc-name", "written_fields": 0,
         })
 
@@ -642,7 +774,7 @@ class PaymentBrowserTests(unittest.TestCase):
                     status="refused",
                     stage="target_binding",
                     refusal=category,
-                    payment_diagnostic_version="0.5.8",
+                    payment_diagnostic_version="0.5.9",
                 ),
             )
 
@@ -928,7 +1060,7 @@ class PaymentBrowserTests(unittest.TestCase):
             ('input', 'name', 'different'), ('input', 'id', 'different'),
             ('input', 'form', 'different'), ('input', 'disabled', ''),
             ('input', 'readonly', ''), ('input', 'required', ''),
-            ('input', 'pattern', '.*'), ('input', 'maxlength', '1'),
+            ('input', 'pattern', '.*'),
             ('section', 'inert', ''), ('section', 'hidden', ''),
             ('section', 'style', 'display:none'), ('form', 'action', '/changed'),
             ('form', 'method', 'post'), ('form', 'id', 'changed'),
@@ -1100,7 +1232,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 success=True,
                 status="filled",
                 filled_fields=4,
-                payment_diagnostic_version="0.5.8",
+                payment_diagnostic_version="0.5.9",
             ),
         )
         for metadata in card["billing_address"].values():
@@ -1392,7 +1524,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 "success": True,
                 "status": "filled",
                 "filled_fields": 4,
-                "payment_diagnostic_version": "0.5.8",
+                "payment_diagnostic_version": "0.5.9",
             },
         )
         self.assertIn("https://merchant.test", prompts[0]["command"])
@@ -1480,7 +1612,7 @@ class PaymentBrowserTests(unittest.TestCase):
             {
                 "success": False,
                 "status": "payment_declined",
-                "payment_diagnostic_version": "0.5.8",
+                "payment_diagnostic_version": "0.5.9",
             },
         )
         self.assertEqual(

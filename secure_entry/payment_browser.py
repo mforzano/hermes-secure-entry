@@ -113,9 +113,25 @@ CHILD = r"""(() => {
        !reflects(r.target.value,reflection.i,reflection.value);
    }
    if(r.type==='attributes' && billingStateRecord(r))return false;
-   if(r.type==='attributes')return (retained.has(r.target) ||
-     selects.some(e=>e.contains(r.target)) || r.target.tagName==='BASE') &&
-     !['class','aria-invalid','aria-describedby','aria-errormessage'].includes(r.attributeName);
+   if(r.type==='attributes'){
+     // Class and validation feedback do not select a credential destination.
+     // Effective visibility/usability and exact values are checked separately.
+     if(['class','aria-invalid','aria-describedby','aria-errormessage'].includes(r.attributeName))return false;
+     if(reflection){
+       // Brand-aware lengths constrain the SAME retained INPUT, including CVC
+       // updated by a PAN event. They cannot authorize another node or value;
+       // post-event exact-value verification still rejects truncation/masking.
+       if(fields.includes(r.target) && r.target.tagName==='INPUT' &&
+         ['maxlength','minlength'].includes(r.attributeName))return false;
+       // Accessible naming/announcements on non-control ancestors are UI, not
+       // form ownership. Not all ARIA is presentation: aria-owns, aria-controls,
+       // activedescendant etc remain sticky, as do control role/name changes.
+       if(retained.has(r.target) && !fields.includes(r.target) &&
+         ['role','aria-label','aria-labelledby','aria-description','aria-hidden',
+          'aria-live','aria-atomic','aria-relevant','aria-busy'].includes(r.attributeName))return false;
+     }
+     return retained.has(r.target) || selects.some(e=>e.contains(r.target)) || r.target.tagName==='BASE';
+   }
    if(r.type==='characterData')return selects.some(e=>e.contains(r.target));
    return Array.from(r.removedNodes).some(n=>retained.has(n) || semanticNode(n)) ||
      Array.from(r.addedNodes).some(semanticNode) || selects.some(e=>e.contains(r.target));

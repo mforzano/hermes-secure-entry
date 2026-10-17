@@ -55,7 +55,10 @@ class CardTests(unittest.TestCase):
     def test_saved_native_card_dynamic_disabled_billing_through_registered_facility(self):
         self.test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(dynamic_billing=True)
 
-    def test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(self, dynamic_billing=False):
+    def test_saved_native_card_brand_validation_whole_widget(self):
+        self.test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(brand_validation=True)
+
+    def test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(self, dynamic_billing=False, brand_validation=False):
         from test_payment_browser import PaymentBrowserTests
         from tools import approval
         handle = self.save_card()
@@ -75,6 +78,8 @@ class CardTests(unittest.TestCase):
                 document.querySelector('form').insertAdjacentHTML('afterbegin','<button type="submit" hidden>Pay</button>');
                 document.querySelector('[autocomplete="cc-csc"]').onchange=()=>zip.disabled=false;
             }''')
+        if brand_validation:
+            fixture.install_brand_validation_widget()
         prompts = []
         def notify(data):
             prompts.append(data)
@@ -94,15 +99,16 @@ class CardTests(unittest.TestCase):
             'frame':fixture.frame, 'merchant_origin':'https://merchant.test',
             'frame_origin':'https://provider.test'}, task_id='synthetic-payment'))
         self.assertTrue(result['success'], result)
-        self.assertEqual(result['filled_fields'], 6)
+        self.assertEqual(result['filled_fields'], 5 if brand_validation else 6)
         self.assertEqual(len(prompts), 1)
         self.assertIn('https://merchant.test', str(prompts))
         self.assertIn('https://provider.test', str(prompts))
         self.assertNotIn('4242424242424242', json.dumps(result) + str(prompts))
-        self.assertEqual(fixture.page.frames[1].locator('[autocomplete=cc-number]').input_value(), '4242424242424242')
+        self.assertEqual(fixture.page.frames[1].locator('[autocomplete=cc-number]').input_value().replace(' ', ''), '4242424242424242')
         self.assertEqual(fixture.page.frames[1].locator('[autocomplete=cc-csc]').input_value(), '987')
         self.assertEqual(fixture.page.frames[1].locator('[autocomplete=cc-name]').input_value(), 'SYNTHETIC CARDHOLDER')
-        self.assertEqual(fixture.page.frames[1].locator('[autocomplete="billing postal-code"]').input_value(), '10001')
+        postal = 'postal-code' if brand_validation else 'billing postal-code'
+        self.assertEqual(fixture.page.frames[1].locator('[autocomplete="'+postal+'"]').input_value(), '10001')
         self.assertIsNotNone(self.store.get_meta(handle), 'fill must not auto-delete before checkout verification')
         deleted = json.loads(self.service.remove_card({'handle':handle, 'merchant_origin':'https://merchant.test'}))
         self.assertEqual(deleted['status'], 'deleted')
