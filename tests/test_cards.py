@@ -43,7 +43,11 @@ class CardTests(unittest.TestCase):
         status = json.loads(self.service.status({'request_id':issued['request_id']}))
         self.assertEqual(status['status'], 'saved')
         for secret in ('4242424242424242', '987', 'SYNTHETIC CARDHOLDER'):
-            self.assertNotIn(secret, saved_html + json.dumps(status))
+            # Opaque random handles can coincidentally contain a three-digit CVC.
+            # Check content fields rather than treating random identifier bytes as
+            # a secret leak; still check PAN/name against the complete response.
+            evidence=status if len(secret)>=8 else {k:v for k,v in status.items() if k!='handle'}
+            self.assertNotIn(secret, saved_html + json.dumps(evidence))
             if len(secret) >= 8:  # short CVC strings can occur by chance in Fernet base64
                 self.assertNotIn(secret.encode(), (Path(self.tmp.name) / 'vault.json.enc').read_bytes())
         # Preview GET and duplicate POST never create another record.
@@ -51,6 +55,40 @@ class CardTests(unittest.TestCase):
             pass
         self.assertEqual(len(self.store.list_items()), 1)
         return status['handle']
+
+    def test_saved_native_card_root_semantic_form_registered_dispatch(self):
+        from test_payment_topology import StandalonePaymentTests
+        from tools import approval
+        from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
+        handle=self.save_card()
+        fixture=StandalonePaymentTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        target=fixture.standalone(fixture.semantic_html())
+        target.close()
+        prompts=[]
+        def notify(data):
+            prompts.append(data)
+            approval.resolve_gateway_approval('synthetic-key','once',request_id=data['request_id'])
+        approval.register_gateway_notify('synthetic-key',notify)
+        self.addCleanup(approval.unregister_gateway_notify,'synthetic-key')
+        ctx=PluginContext(PluginManifest(name='synthetic-root-card'),get_plugin_manager())
+        registration=ctx.register_tool(name='secure_entry_card_fill',toolset='secure_entry',
+            schema={'name':'secure_entry_card_fill','parameters':{'type':'object'}},handler=self.service.card_fill)
+        self.assertIsNotNone(registration)
+        self.addCleanup(registration.dispose)
+        result=json.loads(ctx.dispatch_tool('secure_entry_card_fill',{'handle':handle,'parent':fixture.parent,
+            'frame':fixture.frame,'merchant_origin':'https://merchant.test','frame_origin':'https://merchant.test'},
+            task_id='synthetic-payment'))
+        self.assertTrue(result['success'],result)
+        self.assertEqual(result['filled_fields'],6)
+        self.assertEqual(len(prompts),1)
+        self.assertTrue(fixture.page.evaluate('''()=>document.querySelector('#security').value==='987' &&
+            document.querySelector('[autocomplete="cc-name"]').value==='SYNTHETIC CARDHOLDER' &&
+            document.querySelector('[autocomplete="postal-code"]').value==='10001' '''))
+        self.assertIsNotNone(self.store.get_meta(handle))
+        self.assertEqual(json.loads(self.service.remove_card({'handle':handle,'merchant_origin':'https://merchant.test'}))['status'],'deleted')
+        self.assertIsNone(self.store.get_meta(handle))
 
     def test_saved_native_card_dynamic_disabled_billing_through_registered_facility(self):
         self.test_saved_native_card_fills_retained_iframe_with_genuine_native_consent_then_cleanup(dynamic_billing=True)

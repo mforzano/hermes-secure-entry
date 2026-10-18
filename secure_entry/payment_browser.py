@@ -2,8 +2,10 @@
 
 Only native CapturedCDP handles; never endpoint discovery, page searching, main
 world injection, model JavaScript/selectors, or submission. Deliberately strict:
-one direct iframe, one form or cohesive container, standard autocomplete.
-PAN/expiry/CVC must be empty; matching issued public billing stays private.
+one explicit root document or direct iframe, one form or cohesive container.
+Standard PAN autocomplete anchors labeled expiry/CVC inference; PAN/CVC and
+expiry INPUTs must be empty. Numeric expiry SELECT defaults may be replaced;
+matching issued public billing stays private.
 Parent pre/post checks are not an atomic cross-document no-disclosure fence.
 Inspired by the reviewed secure-env-ingress design; no source copied (upstream
 has no declared license). Remote object IDs retain document/node identity in an
@@ -42,7 +44,8 @@ CHILD = r"""(() => {
  // Apply the same inventory filter globally so unsupported data inputs outside
  // the form still refuse. Unknown form-associated control types stay rejected.
  const dataControl=e=>!['BUTTON','FIELDSET','OUTPUT'].includes(e.tagName) &&
-   !(e.tagName==='INPUT' && ['submit','reset','button','image'].includes(e.type));
+   !(e.tagName==='INPUT' && (['submit','reset','button','image'].includes(e.type) ||
+     (e.type==='hidden' && !e.autocomplete)));
  const documentFields=Array.from(doc.querySelectorAll('input,select,textarea')).filter(dataControl);
  const fields=form ? Array.from(form.elements).filter(dataControl) : documentFields;
  // A null form owner alone is not a group. Retain the smallest common
@@ -60,21 +63,54 @@ CHILD = r"""(() => {
  // Canonicalize only the standard unsectioned postal token for billing lookup.
  // Retain the original descriptors for authority checks; never edit page attributes.
  const autocomplete=fields.map(e=>e.autocomplete);
- const tokens=autocomplete.map(t=>t==='postal-code'?'billing postal-code':t);
+ // Labels, never provider IDs/classes, infer only missing payment semantics.
+ // PAN remains an explicit cc-number anchor in this one owned form/container.
+ const normalize=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+ const textOutsideControls=n=>{
+   const walker=doc.createTreeWalker(n,NodeFilter.SHOW_TEXT);let text='',v;
+   while((v=walker.nextNode()))if(!v.parentElement.closest('input,select,textarea,button,script,style'))text+=' '+v.data;
+   return text;
+ };
+ const labelNodes=e=>{
+   const labels=[...Array.from(e.labels || []),
+     ...((e.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map(id=>doc.getElementById(id)).filter(Boolean))];
+   if(labels.length || e.hasAttribute('aria-label'))return labels;
+   // Conservative structural fallback: nearest non-form row/group with exactly
+   // one data control and nonempty text outside options/other controls.
+   for(let n=e.parentElement;n && n!==container && !['FORM','BODY','HTML'].includes(n.tagName);n=n.parentElement){
+     if(Array.from(n.querySelectorAll('input,select,textarea')).filter(dataControl).length!==1)break;
+     if(normalize(textOutsideControls(n)))return [n];
+   }
+   return [];
+ };
+ const labelText=e=>normalize(labelNodes(e).map(textOutsideControls).join(' ')+' '+(e.getAttribute('aria-label') || ''));
+ const infer=e=>{
+   const s=labelText(e);
+   if(/^(?:(?:card )?(?:security|verification) (?:code|value)(?: (?:cvv2?|cvc2?|csc))?|cvv2?|cvc2?|csc)$/.test(s))return 'cc-csc';
+   if(/^(?:(?:card )?(?:expiration|expiry|exp) )?month$/.test(s))return 'cc-exp-month';
+   if(/^(?:(?:card )?(?:expiration|expiry|exp) )?year$/.test(s))return 'cc-exp-year';
+   if(/^(?:card )?(?:expiration|expiry|expiration date|expiry date|exp date)$/.test(s))return 'cc-exp';
+   return '';
+ };
+ const tokens=autocomplete.map((t,i)=>t==='postal-code'?'billing postal-code':
+   (!t || t==='off' || t==='on')?infer(fields[i]):t);
+ const inferred=autocomplete.map(t=>!t || t==='off' || t==='on');
+ const semanticLabels=new Set(fields.flatMap((e,i)=>inferred[i]?labelNodes(e):[]));
  if(documentFields.length!==fields.length ||
    fields.some((e,i)=>!['INPUT','SELECT'].includes(e.tagName) || !allowed.includes(tokens[i]) ||
-     (e.tagName==='SELECT' && !['billing country','billing address-level1'].includes(e.autocomplete))) ||
+     (e.tagName==='SELECT' && !['billing country','billing address-level1','cc-exp-month','cc-exp-year'].includes(tokens[i]))) ||
    new Set(tokens).size!==tokens.length || !tokens.includes('cc-number') ||
    (tokens.includes('cc-exp') ? tokens.includes('cc-exp-month') || tokens.includes('cc-exp-year') :
      !tokens.includes('cc-exp-month') || !tokens.includes('cc-exp-year')))throw Error('unsupported');
  const credential=i=>tokens[i].startsWith('cc-') && tokens[i]!=='cc-name';
+ const expirySelect=i=>fields[i].tagName==='SELECT' && ['cc-exp-month','cc-exp-year'].includes(tokens[i]);
  const visible=e=>!['hidden','password','checkbox','radio','file','submit','button'].includes(e.type) &&
    e.getClientRects().length && getComputedStyle(e).visibility==='visible';
  const disabled=fields.map(e=>e.matches(':disabled'));
  const readonly=fields.map(e=>!!e.readOnly);
  // Billing availability is not credential authority. Retain even unavailable
  // billing nodes; never admit unavailable or prefilled PAN/expiry/CVC.
- if(fields.some((e,i)=>!visible(e) || (credential(i) && (disabled[i] || readonly[i] || e.value))))throw Error('unsupported');
+ if(fields.some((e,i)=>!visible(e) || (credential(i) && (disabled[i] || readonly[i] || (e.value && !expirySelect(i))))))throw Error('unsupported');
  const initial=fields.map(e=>e.value);
  const initiallyDisabled=disabled.slice(), settled=new Set();
  let changed=false, used=false;
@@ -85,7 +121,8 @@ CHILD = r"""(() => {
  const lineages=fields.map(e=>{const a=[];for(;e;e=e.parentNode)a.push(e);return a;});
  const retained=new Set(lineages.flat());
  const selects=fields.filter(e=>e.tagName==='SELECT');
- const semanticNode=n=>n.nodeType===1 && (n.matches('input,select,textarea,form,base') || n.querySelector('input,select,textarea,form,base'));
+ const semanticNode=n=>n.nodeType===1 && (n.matches('input,select,textarea,form,base') || n.querySelector('input,select,textarea,form,base') ||
+   (inferred.some(Boolean) && (n.matches('label') || n.querySelector('label'))));
  // Only the currently dispatched self-write may reflect into its INPUT value
  // attribute. Keep exact semantic PAN/expiry invariants, including every queued
  // intermediate attribute value (oldValue reconstructs synchronous restoration).
@@ -102,9 +139,15 @@ CHILD = r"""(() => {
    /^[0-9]+(?:[ -][0-9]+)*$/.test(v) && v.replace(/[ -]/g,'')===want) ||
    (tokens[i]==='cc-exp' && /^[0-9]{2} *\/ *[0-9]{2}$/.test(v) && v.replace(/ /g,'')===want);
  const securityRecords=records=>records.some((r,k)=>{
+   // Inferred authority includes exact accessible label nodes and their text.
+   // Do not exempt label changes as presentation, even during self-write.
+   if(!fields.includes(r.target) && Array.from(semanticLabels).some(n=>n===r.target || n.contains(r.target)))return true;
+   if(r.type==='childList' && Array.from(r.removedNodes).some(n=>
+     Array.from(semanticLabels).some(label=>n===label || n.contains(label))))return true;
    // An excluded action INPUT must not turn into an unretained data control,
    // even if its type is restored before the next check.
-   if(r.type==='attributes' && r.attributeName==='type' && r.target.tagName==='INPUT')return true;
+   if(r.type==='attributes' && r.target.tagName==='INPUT' &&
+     (r.attributeName==='type' || (r.attributeName==='autocomplete' && r.target.type==='hidden')))return true;
    if(r.type==='attributes' && r.attributeName==='value' && reflection &&
      r.target===fields[reflection.i] && r.target.tagName==='INPUT'){
      const next=records.slice(k+1).find(n=>n.type==='attributes' && n.target===r.target && n.attributeName==='value');
@@ -168,9 +211,20 @@ CHILD = r"""(() => {
      const skipped=[];
      let index=values.findIndex((v,i)=>typeof v!=='string' && !skippable(i));
      if(index>=0)return refuse('source_missing',index);
+     // Map only exact numeric month/year aliases on the retained SELECT. Never
+     // infer opaque provider option IDs or select one of duplicate equivalents.
+     for(let i=0;i<fields.length;i++)if(expirySelect(i)){
+       const month=tokens[i]==='cc-exp-month', want=values[i];
+       const matches=Array.from(fields[i].options).filter(o=>!o.disabled && !o.parentElement.disabled &&
+         (month ? /^(?:0?[1-9]|1[0-2])$/.test(o.value) && Number(o.value)===Number(want) :
+           /^(?:[0-9]{2}|[0-9]{4})$/.test(o.value) &&
+             (o.value.length===2 ? Number(o.value)===Number(want)%100 : o.value===want)));
+       if(matches.length!==1)return refuse('select_mismatch',i);
+       values[i]=matches[0].value;
+     }
      index=fields.findIndex((e,i)=>e.value!==initial[i]);
      if(index>=0)return refuse('field_changed',index);
-     index=fields.findIndex((e,i)=>initial[i] && initial[i]!==values[i]);
+     index=fields.findIndex((e,i)=>initial[i] && initial[i]!==values[i] && !expirySelect(i));
      if(index>=0)return refuse('initial_mismatch',index);
      index=fields.findIndex((e,i)=>e.tagName==='SELECT' && !unavailable(i) &&
        Array.from(e.options).filter(o=>o.value===values[i] && !o.disabled && !o.parentElement.disabled).length!==1);
@@ -282,6 +336,21 @@ class Target:
             category = "frame_lineage"
             tree = self.call("Page.getFrameTree", {}, self.psid)["frameTree"]
             root = tree["frame"]["id"]
+            if frame == root:
+                # Root mode is explicit, never a fallback from an invalid iframe.
+                # Its isolated retained document is both merchant and destination.
+                if provider != merchant:
+                    raise ValueError("target_refused")
+                context = self.world(root, self.psid)
+                category = "form_layout"
+                self.cg = self.remote(
+                    "Runtime.evaluate", {"expression": CHILD, "contextId": context}, self.psid
+                )
+                self.pg = self.cg
+                if self.invoke(self.psid, self.cg, "function(){return this.origin;}") != merchant:
+                    raise ValueError("target_refused")
+                self.check()
+                return
             owner = self.call("DOM.getFrameOwner", {"frameId": frame}, self.psid)[
                 "backendNodeId"
             ]
@@ -494,7 +563,7 @@ class Target:
             not isinstance(result, dict)
             or result.get("valid") is not True
             or not isinstance(result.get("written"), int)
-            or result["written"] < 2
+            or result["written"] < 1
         ):
             raise WriteRefused(result if isinstance(result, dict) else {})
         response = {"success": True, "status": "filled", "filled_fields": result["written"]}

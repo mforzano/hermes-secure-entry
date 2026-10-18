@@ -70,7 +70,8 @@ class PaymentBrowserTests(unittest.TestCase):
         self.pw.stop()
 
     def _run_facility(
-        self, choice="once", before_answer=None, issued_card=None, expected_prompts=1
+        self, choice="once", before_answer=None, issued_card=None, expected_prompts=1,
+        frame_origin="https://provider.test", registered=False,
     ):
         from secure_entry.payment import LocalPayment
         from secure_entry.service import Service
@@ -129,16 +130,25 @@ class PaymentBrowserTests(unittest.TestCase):
             )
             facility = LocalPayment(service, [sys.executable, str(script)])
             service.payment = facility
+            handler=service.payment_fill
+            if registered:
+                from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
+                ctx=PluginContext(PluginManifest(name='synthetic-root-payment'),get_plugin_manager())
+                registration=ctx.register_tool(name='secure_entry_payment_fill',toolset='secure_entry',
+                    schema={'name':'secure_entry_payment_fill','parameters':{'type':'object'}},handler=handler)
+                self.assertIsNotNone(registration)
+                self.addCleanup(registration.dispose)
+                handler=lambda args, **kw:ctx.dispatch_tool('secure_entry_payment_fill',args,**kw)
             # Deliberately no legacy session metadata: BrowserUse dispatch does
             # not populate the native task-key cache for every route.
             with patch.dict(browser_tool._active_sessions, {}, clear=True):
                 result = json.loads(
-                    service.payment_fill(
+                    handler(
                         {
                             "parent": self.parent,
                             "frame": self.frame,
                             "merchant_origin": "https://merchant.test",
-                            "frame_origin": "https://provider.test",
+                            "frame_origin": frame_origin,
                             "spend_request_id": "lsrq_synthetic",
                         },
                         task_id="synthetic-payment",
@@ -536,7 +546,7 @@ class PaymentBrowserTests(unittest.TestCase):
 
     def test_non_data_filter_does_not_hide_unsupported_data_inputs(self):
         for extra in (
-            '<input type="hidden" name="opaque">',
+            '<input type="hidden" autocomplete="cc-number">',
             '<input type="text" name="other">',
             '<input type="checkbox">',
             '<input autocomplete="cc-number">',
@@ -617,7 +627,7 @@ class PaymentBrowserTests(unittest.TestCase):
         })
         self.assertEqual(result, {
             "success": False, "status": "write_unknown", "stage": "write",
-            "payment_diagnostic_version": "0.5.9",
+            "payment_diagnostic_version": "0.5.10",
             "refusal": "initial_mismatch", "field": "cc-name", "written_fields": 0,
         })
 
@@ -774,7 +784,7 @@ class PaymentBrowserTests(unittest.TestCase):
                     status="refused",
                     stage="target_binding",
                     refusal=category,
-                    payment_diagnostic_version="0.5.9",
+                    payment_diagnostic_version="0.5.10",
                 ),
             )
 
@@ -1232,7 +1242,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 success=True,
                 status="filled",
                 filled_fields=4,
-                payment_diagnostic_version="0.5.9",
+                payment_diagnostic_version="0.5.10",
             ),
         )
         for metadata in card["billing_address"].values():
@@ -1524,7 +1534,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 "success": True,
                 "status": "filled",
                 "filled_fields": 4,
-                "payment_diagnostic_version": "0.5.9",
+                "payment_diagnostic_version": "0.5.10",
             },
         )
         self.assertIn("https://merchant.test", prompts[0]["command"])
@@ -1612,7 +1622,7 @@ class PaymentBrowserTests(unittest.TestCase):
             {
                 "success": False,
                 "status": "payment_declined",
-                "payment_diagnostic_version": "0.5.9",
+                "payment_diagnostic_version": "0.5.10",
             },
         )
         self.assertEqual(

@@ -17,13 +17,13 @@ def register(ctx):
          'Fill a privately saved real card by native vault metadata handle. In addition to Link, not a replacement. '
          'First determine the official checkout merchant origin, request operation=add_card bound to that origin, '
          'and retain the saved cleanup handle. Native explicit consent authorizes this merchant and payment-frame pair only. '
-         'Uses the same retained native browser writer as Link; never submits, purchases, reserves or auto-deletes. '
+         'Uses the same retained native browser writer as Link for top-level or direct iframe forms; standard autocomplete plus labeled expiry/CVC. Never submits, purchases, reserves or auto-deletes. '
          'Inspect checkout outcome before explicit cleanup; write_unknown is not proof of no fill. Never provide card values.',
          {'handle':{'type':'string','description':'Saved native payment handle, also used for cleanup.'},
           'parent':{'type':'string','description':'Exact task-selected merchant page target ID.'},
-          'frame':{'type':'string','description':'Exact direct payment iframe ID.'},
+          'frame':{'type':'string','description':'Exact inspected payment frame ID: direct iframe, or this selected page root frame for a top-level form. Never omit or guess.'},
           'merchant_origin':{'type':'string','description':'Exact HTTPS merchant origin matching the saved card binding.'},
-          'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment-provider iframe origin, separately shown for consent.'}},
+          'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment document origin; must equal merchant_origin for a top-level root form.'}},
          ['handle','parent','frame','merchant_origin','frame_origin']),
         ('secure_entry_card_remove', service.remove_card,
          'Explicitly remove a saved native payment card by metadata handle and merchant origin in an authenticated human DM. '
@@ -35,13 +35,14 @@ def register(ctx):
          ['handle','merchant_origin']),
         ('secure_entry_payment_fill', service.payment_fill,
          'Native local Link CLI private-card handoff into the existing task-captured browser. Requires an already user-approved Link spend request; '
-         'asks separate native explicit payment consent. Binds the task-selected parent and direct payment iframe '
-         'documents before retrieval. Windows only, strict standard cc autocomplete form; no submission or vault save. '
+         'asks separate native explicit payment consent. Binds the task-selected parent and explicit payment '
+         'document before retrieval: top-level root frame or direct iframe. Windows only; standard cc autocomplete '
+         'and semantically labeled expiry/CVC fields; no submission or vault save. '
          'Never provide card data, file paths, selectors or scripts. Refusal is not permission to bypass the facility.',
          {'parent':{'type':'string','description':'Exact task-selected page target ID.'},
-          'frame':{'type':'string','description':'Exact direct payment iframe ID.'},
+          'frame':{'type':'string','description':'Exact inspected payment frame ID: direct iframe, or this selected page root frame for a top-level form. Never omit or guess.'},
           'merchant_origin':{'type':'string','description':'Exact HTTPS merchant origin.'},
-          'frame_origin':{'type':'string','description':'Exact HTTPS payment provider origin.'},
+          'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment document origin; must equal merchant_origin for a top-level root form.'},
           'spend_request_id':{'type':'string','description':'Already user-approved Link spend request ID.'}},
          ['parent','frame','merchant_origin','frame_origin','spend_request_id']),
         ('secure_entry_request', service.request,

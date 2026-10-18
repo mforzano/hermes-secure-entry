@@ -25,6 +25,10 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(set(ctx.tools), {'secure_entry_request', 'secure_entry_status', 'secure_entry_cancel',
             'secure_entry_payment_fill', 'secure_entry_card_fill', 'secure_entry_card_remove'})
         self.assertIn('add_card', ctx.tools['secure_entry_request']['schema']['parameters']['properties']['operation']['enum'])
+        for name in ('secure_entry_payment_fill','secure_entry_card_fill'):
+            schema=ctx.tools[name]['schema']
+            self.assertIn('root',schema['parameters']['properties']['frame']['description'])
+            self.assertIn('top-level',schema['description'])
         self.assertIn('agent_loop_stopped', ctx.hooks)
         self.assertIn('tool_execution', ctx.middleware)
         for item in ctx.tools.values():
