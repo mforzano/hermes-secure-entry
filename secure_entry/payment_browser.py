@@ -47,7 +47,7 @@ CHILD = r"""(() => {
    !(e.tagName==='INPUT' && (['submit','reset','button','image'].includes(e.type) ||
      (e.type==='hidden' && !e.autocomplete)));
  const documentFields=Array.from(doc.querySelectorAll('input,select,textarea')).filter(dataControl);
- const fields=form ? Array.from(form.elements).filter(dataControl) : documentFields;
+ let fields=form ? Array.from(form.elements).filter(dataControl) : documentFields;
  // A null form owner alone is not a group. Retain the smallest common
  // non-document container; sibling widgets joined only by body/html refuse.
  let container=form || (fields[0] && fields[0].parentElement);
@@ -56,13 +56,13 @@ CHILD = r"""(() => {
    while(container && !fields.every(e=>container.contains(e)))container=container.parentElement;
    if(!container || container===doc.body || container===doc.documentElement)throw Error('unsupported');
  }
- const parents=fields.map(e=>e.parentNode);
+
  const allowed=['cc-number','cc-exp','cc-exp-month','cc-exp-year','cc-csc','cc-name',
    'billing country','billing address-line1','billing address-line2','billing address-level2',
    'billing address-level1','billing postal-code','billing tel'];
  // Canonicalize only the standard unsectioned postal token for billing lookup.
  // Retain the original descriptors for authority checks; never edit page attributes.
- const autocomplete=fields.map(e=>e.autocomplete);
+ let autocomplete=fields.map(e=>e.autocomplete);
  // Labels, never provider IDs/classes, infer only missing payment semantics.
  // PAN remains an explicit cc-number anchor in this one owned form/container.
  const normalize=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
@@ -92,20 +92,35 @@ CHILD = r"""(() => {
    if(/^(?:card )?(?:expiration|expiry|expiration date|expiry date|exp date)$/.test(s))return 'cc-exp';
    return '';
  };
- const tokens=autocomplete.map((t,i)=>t==='postal-code'?'billing postal-code':
+ let tokens=autocomplete.map((t,i)=>t==='postal-code'?'billing postal-code':
    (!t || t==='off' || t==='on')?infer(fields[i]):t);
- const inferred=autocomplete.map(t=>!t || t==='off' || t==='on');
+ let inferred=autocomplete.map(t=>!t || t==='off' || t==='on');
+ const visible=e=>!['hidden','password','checkbox','radio','file','submit','button'].includes(e.type) &&
+   e.getClientRects().length && getComputedStyle(e).visibility==='visible';
+ // Partition only supported inactive billing peers; never credentials/unknowns.
+ if(documentFields.length!==fields.length)throw Error('unsupported');
+ const alternatives=fields.filter((e,i)=>!visible(e) && tokens[i].startsWith('billing ') &&
+   allowed.includes(tokens[i]) && (e.tagName==='INPUT' && ['text','tel'].includes(e.type) ||
+     e.tagName==='SELECT' && ['billing country','billing address-level1'].includes(tokens[i])) &&
+   e.form===form && container.contains(e) &&
+   fields.filter((p,j)=>tokens[j]===tokens[i] && visible(p)).length===1);
+ const inventory=fields.slice(), alternativeParents=alternatives.map(e=>e.parentNode);
+ const active=fields.map((e,i)=>alternatives.includes(e)?-1:i).filter(i=>i>=0);
+ fields=active.map(i=>inventory[i]);
+ autocomplete=active.map(i=>autocomplete[i]);
+ tokens=active.map(i=>tokens[i]);
+ inferred=active.map(i=>inferred[i]);
+ const parents=fields.map(e=>e.parentNode);
+ const alternativeLineage=new Set();
+ alternatives.forEach(e=>{for(let n=e;n;n=n.parentNode)alternativeLineage.add(n);});
  const semanticLabels=new Set(fields.flatMap((e,i)=>inferred[i]?labelNodes(e):[]));
- if(documentFields.length!==fields.length ||
-   fields.some((e,i)=>!['INPUT','SELECT'].includes(e.tagName) || !allowed.includes(tokens[i]) ||
+ if(fields.some((e,i)=>!['INPUT','SELECT'].includes(e.tagName) || !allowed.includes(tokens[i]) ||
      (e.tagName==='SELECT' && !['billing country','billing address-level1','cc-exp-month','cc-exp-year'].includes(tokens[i]))) ||
    new Set(tokens).size!==tokens.length || !tokens.includes('cc-number') ||
    (tokens.includes('cc-exp') ? tokens.includes('cc-exp-month') || tokens.includes('cc-exp-year') :
      !tokens.includes('cc-exp-month') || !tokens.includes('cc-exp-year')))throw Error('unsupported');
  const credential=i=>tokens[i].startsWith('cc-') && tokens[i]!=='cc-name';
  const expirySelect=i=>fields[i].tagName==='SELECT' && ['cc-exp-month','cc-exp-year'].includes(tokens[i]);
- const visible=e=>!['hidden','password','checkbox','radio','file','submit','button'].includes(e.type) &&
-   e.getClientRects().length && getComputedStyle(e).visibility==='visible';
  const disabled=fields.map(e=>e.matches(':disabled'));
  const readonly=fields.map(e=>!!e.readOnly);
  // Billing availability is not credential authority. Retain even unavailable
@@ -119,7 +134,7 @@ CHILD = r"""(() => {
  // restored synchronously before the next check. Class is widget presentation;
  // actual visibility/usability is still checked before and after each event.
  const lineages=fields.map(e=>{const a=[];for(;e;e=e.parentNode)a.push(e);return a;});
- const retained=new Set(lineages.flat());
+ const retained=new Set([...lineages.flat(),...alternativeLineage]);
  const selects=fields.filter(e=>e.tagName==='SELECT');
  const semanticNode=n=>n.nodeType===1 && (n.matches('input,select,textarea,form,base') || n.querySelector('input,select,textarea,form,base') ||
    (inferred.some(Boolean) && (n.matches('label') || n.querySelector('label'))));
@@ -139,6 +154,14 @@ CHILD = r"""(() => {
    /^[0-9]+(?:[ -][0-9]+)*$/.test(v) && v.replace(/[ -]/g,'')===want) ||
    (tokens[i]==='cc-exp' && /^[0-9]{2} *\/ *[0-9]{2}$/.test(v) && v.replace(/ /g,'')===want);
  const securityRecords=records=>records.some((r,k)=>{
+   // Exclusion is retained authority, not an ignore-list. Preserve sticky
+   // reveal/type/semantic mutations even when restored before validation.
+   if(r.type==='attributes' && (alternatives.includes(r.target) ||
+     alternativeLineage.has(r.target) && ['class','style','hidden'].includes(r.attributeName)))return true;
+   if(alternatives.length && (r.target.nodeType===1 ? r.target.closest('style,link') :
+     r.target.parentElement && r.target.parentElement.closest('style')))return true;
+   if(alternatives.length && r.type==='childList' && [...r.addedNodes,...r.removedNodes].some(n=>
+     n.nodeType===1 && (n.matches('style,link') || n.querySelector('style,link'))))return true;
    // Inferred authority includes exact accessible label nodes and their text.
    // Do not exempt label changes as presentation, even during self-write.
    if(!fields.includes(r.target) && Array.from(semanticLabels).some(n=>n===r.target || n.contains(r.target)))return true;
@@ -188,7 +211,10 @@ CHILD = r"""(() => {
      if(!!e.readOnly!==readonly[i])changed=true;
    });
    return !changed && document===doc && location.href===href && location.origin===origin &&
-     container.isConnected && container.ownerDocument===doc && fields.every((e,i)=>e.isConnected && e.form===form && container.contains(e) && e.parentNode===parents[i] && e.ownerDocument===doc && visible(e) && e.autocomplete===autocomplete[i]);};
+     container.isConnected && container.ownerDocument===doc &&
+     alternatives.every((e,i)=>e.isConnected && e.ownerDocument===doc && e.form===form &&
+       container.contains(e) && e.parentNode===alternativeParents[i] && !visible(e)) &&
+     fields.every((e,i)=>e.isConnected && e.form===form && container.contains(e) && e.parentNode===parents[i] && e.ownerDocument===doc && visible(e) && e.autocomplete===autocomplete[i]);};
  const setters={INPUT:Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set,
    SELECT:Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set};
  return {valid, origin,

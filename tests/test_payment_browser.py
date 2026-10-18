@@ -174,6 +174,43 @@ class PaymentBrowserTests(unittest.TestCase):
         self.assertTrue(target.attached)
         return target
 
+    @staticmethod
+    def alternative_billing_fixture(extra=''):
+        # Complete observed shape, synthetic names/options only; no merchant IDs.
+        return '''<form><input type="hidden" name="state"><input type="hidden" name="events">
+          <input type="submit" hidden><button type="submit" style="display:none">Submit</button>
+          <label>ZIP<input autocomplete="postal-code" required></label>
+          <div style="display:none"><input id="alternative" autocomplete="postal-code"></div>
+          <input autocomplete="cc-name"><input autocomplete="cc-number">
+          <label>* Month<select><option value="">Choose</option><option value="12">December</option></select></label>
+          <label>* Year<select><option value="">Choose</option><option value="2035">2035</option></select></label>
+          <label>Card Verification Value(CVV2)<input></label>
+          <button>Back</button><button>Next</button><button>Exit</button>''' + extra + '</form>'
+
+    def test_hidden_alternative_complete_form_registered_native_fill(self):
+        self.page.frames[1].evaluate('html=>document.body.innerHTML=html', self.alternative_billing_fixture())
+        result, _ = self._run_facility(registered=True, issued_card={
+            'number':'4242424242424242', 'exp_month':12, 'exp_year':2035, 'cvc':'123',
+            'billing_address':{'name':'Synthetic Cardholder', 'postal_code':'10001'},
+        })
+        self.assertTrue(result.get('success'), result)
+        self.assertEqual(result['filled_fields'], 6)
+        self.assertTrue(self.page.frames[1].evaluate('document.querySelector("#alternative").value===""'))
+
+    def test_hidden_alternative_mutations_remain_sticky(self):
+        for mutation in (
+            "e.type='password';e.type='text'",
+            "e.autocomplete='billing tel';e.autocomplete='postal-code'",
+            "e.parentElement.style.display='block';e.parentElement.style.display='none'",
+            "e.remove();document.forms[0].append(e)",
+        ):
+            with self.subTest(mutation=mutation):
+                target=self.target_for_html(self.alternative_billing_fixture())
+                self.page.frames[1].evaluate("()=>{const e=document.querySelector('#alternative');"+mutation+"}")
+                with self.assertRaises(ValueError):
+                    target.check()
+                target.close()
+
     def test_standard_form_non_data_buttons_are_not_fill_targets(self):
         for control in (
             '<button type="submit" hidden>Pay</button>',
@@ -627,7 +664,7 @@ class PaymentBrowserTests(unittest.TestCase):
         })
         self.assertEqual(result, {
             "success": False, "status": "write_unknown", "stage": "write",
-            "payment_diagnostic_version": "0.5.10",
+            "payment_diagnostic_version": "0.5.11",
             "refusal": "initial_mismatch", "field": "cc-name", "written_fields": 0,
         })
 
@@ -784,7 +821,7 @@ class PaymentBrowserTests(unittest.TestCase):
                     status="refused",
                     stage="target_binding",
                     refusal=category,
-                    payment_diagnostic_version="0.5.10",
+                    payment_diagnostic_version="0.5.11",
                 ),
             )
 
@@ -1242,7 +1279,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 success=True,
                 status="filled",
                 filled_fields=4,
-                payment_diagnostic_version="0.5.10",
+                payment_diagnostic_version="0.5.11",
             ),
         )
         for metadata in card["billing_address"].values():
@@ -1534,7 +1571,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 "success": True,
                 "status": "filled",
                 "filled_fields": 4,
-                "payment_diagnostic_version": "0.5.10",
+                "payment_diagnostic_version": "0.5.11",
             },
         )
         self.assertIn("https://merchant.test", prompts[0]["command"])
@@ -1622,7 +1659,7 @@ class PaymentBrowserTests(unittest.TestCase):
             {
                 "success": False,
                 "status": "payment_declined",
-                "payment_diagnostic_version": "0.5.10",
+                "payment_diagnostic_version": "0.5.11",
             },
         )
         self.assertEqual(
