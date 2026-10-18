@@ -18,7 +18,7 @@ from .payment_file import PrivateCard, PrivateFileRefused
 from .payment_browser import BindingRefused, Target, WriteRefused
 
 
-PAYMENT_DIAGNOSTIC_VERSION = "0.5.11"
+PAYMENT_DIAGNOSTIC_VERSION = "0.5.12"
 
 
 class RetrievalRefused(ValueError):
@@ -202,13 +202,19 @@ class LocalPayment:
                 consent_started = time.monotonic()
                 # Genuine existing native surface; no approval callbacks installed
                 # or forged. Photon/gateway notification belongs to the host.
+                topology_disclosure = (
+                    f"Offsite top-level processor {provider} for merchant {merchant}. "
+                    "No live merchant parent is retained. Authorize this exact merchant/processor pair. "
+                    if getattr(target, "offsite_root", False) else ""
+                )
                 verdict = request_elicitation_consent(
                     f"Fill saved payment on merchant {merchant}; payment frame {provider}; handle {rid}" if self.card_source else
                     f"Fill Link payment on merchant {merchant}; payment frame {provider}; request {rid}",
+                    topology_disclosure + (
                     "Enter the site-bound saved card into this exact authorized merchant/payment-frame pair. "
                     "This does not submit, reserve or purchase. Card remains saved; explicitly delete after verifying checkout outcome." if self.card_source else
                     "Enter the approved one-time Link card into this exact checkout document. "
-                    "This does not submit or purchase. No card is saved in the vault.",
+                    "This does not submit or purchase. No card is saved in the vault."),
                     surface="vault-payment",
                     title="Confirm saved card fill?" if self.card_source else "Confirm local Link card fill?",
                 )

@@ -364,16 +364,17 @@ class Target:
             root = tree["frame"]["id"]
             if frame == root:
                 # Root mode is explicit, never a fallback from an invalid iframe.
-                # Its isolated retained document is both merchant and destination.
-                if provider != merchant:
-                    raise ValueError("target_refused")
+                # Retain the exact processor document. The logical merchant is
+                # checked independently against the private card's binding;
+                # offsite roots have no live merchant ancestry to retain.
+                self.offsite_root = provider != merchant
                 context = self.world(root, self.psid)
                 category = "form_layout"
                 self.cg = self.remote(
                     "Runtime.evaluate", {"expression": CHILD, "contextId": context}, self.psid
                 )
                 self.pg = self.cg
-                if self.invoke(self.psid, self.cg, "function(){return this.origin;}") != merchant:
+                if self.invoke(self.psid, self.cg, "function(){return this.origin;}") != provider:
                     raise ValueError("target_refused")
                 self.check()
                 return

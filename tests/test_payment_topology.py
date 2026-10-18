@@ -312,6 +312,32 @@ class StandalonePaymentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             target.check()
 
+    def test_offsite_root_registered_native_consent_and_exact_provider(self):
+        # The selected page is the processor, not a retained merchant ancestor.
+        self.page.goto("https://provider.test/pay")
+        session = self.context.new_cdp_session(self.page)
+        self.frame = session.send("Page.getFrameTree")["frameTree"]["frame"]["id"]
+        # A merchant mismatch never excuses a wrong destination origin.
+        result, _ = self._run_facility(
+            frame_origin="https://wrong-provider.test", registered=True, expected_prompts=0
+        )
+        self.assertFalse(result["success"], result)
+        self.assertEqual(result["stage"], "target_binding")
+        self.assertTrue(self.page.evaluate(
+            '()=>[...document.querySelectorAll("input")].every(e=>e.value==="")'
+        ))
+        # Real synthetic producer still issues for merchant.test, not provider.test.
+        result, prompts = self._run_facility(registered=True)
+        self.assertTrue(result["success"], result)
+        self.assertEqual(result["filled_fields"], 4)
+        disclosure = str(prompts[0])
+        self.assertIn("https://merchant.test", disclosure)
+        self.assertIn("https://provider.test", disclosure)
+        self.assertIn("No live merchant parent is retained", disclosure)
+        self.assertTrue(self.page.evaluate(
+            '()=>[...document.querySelectorAll("input")].every(e=>e.value.length>0)'
+        ))
+
     def test_root_origin_or_frame_mismatch_never_falls_back(self):
         target = self.standalone(self.semantic_html())
         target.close()

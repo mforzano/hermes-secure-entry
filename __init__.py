@@ -23,7 +23,7 @@ def register(ctx):
           'parent':{'type':'string','description':'Exact task-selected merchant page target ID.'},
           'frame':{'type':'string','description':'Exact inspected payment frame ID: direct iframe, or this selected page root frame for a top-level form. Never omit or guess.'},
           'merchant_origin':{'type':'string','description':'Exact HTTPS merchant origin matching the saved card binding.'},
-          'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment document origin; must equal merchant_origin for a top-level root form.'}},
+          'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment document origin, including an offsite top-level processor explicitly authorized in native consent.'}},
          ['handle','parent','frame','merchant_origin','frame_origin']),
         ('secure_entry_card_remove', service.remove_card,
          'Explicitly remove a saved native payment card by metadata handle and merchant origin in an authenticated human DM. '
@@ -42,7 +42,7 @@ def register(ctx):
          {'parent':{'type':'string','description':'Exact task-selected page target ID.'},
           'frame':{'type':'string','description':'Exact inspected payment frame ID: direct iframe, or this selected page root frame for a top-level form. Never omit or guess.'},
           'merchant_origin':{'type':'string','description':'Exact HTTPS merchant origin.'},
-          'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment document origin; must equal merchant_origin for a top-level root form.'},
+          'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment document origin, including an offsite top-level processor explicitly authorized in native consent.'},
           'spend_request_id':{'type':'string','description':'Already user-approved Link spend request ID.'}},
          ['parent','frame','merchant_origin','frame_origin','spend_request_id']),
         ('secure_entry_request', service.request,
