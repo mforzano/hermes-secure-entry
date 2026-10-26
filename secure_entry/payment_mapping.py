@@ -17,9 +17,12 @@ MAPPED = r"""function(tokens, ...fields) {
  // billing fields, accessibility feedback and DOM mutations are not authority.
  const relevant=records=>records.some(r=>r.type==='childList'
    ? Array.from(r.removedNodes).some(n=>fields.some(e=>n===e || n.contains(e)))
-   : fields.includes(r.target) && ['type','form'].includes(r.attributeName));
+   : fields.includes(r.target) && ['type','form'].includes(r.attributeName) &&
+     r.oldValue!==r.target.getAttribute(r.attributeName));
  const observer=new MutationObserver(rs=>{if(relevant(rs))changed=true;});
- observer.observe(doc,{subtree:true,childList:true,attributes:true});
+ // Every queued old value must equal the current attribute: repeated no-op
+ // writes survive, but a real change followed by restoration stays sticky.
+ observer.observe(doc,{subtree:true,childList:true,attributes:true,attributeOldValue:true});
  const valid=()=>{
    if(relevant(observer.takeRecords()))changed=true;
    return !changed && document===doc && location.href===href && location.origin===origin &&

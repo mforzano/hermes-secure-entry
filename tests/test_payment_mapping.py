@@ -59,7 +59,25 @@ class MappingTests(unittest.TestCase):
         self.assertIn('cc-number',str(prompts))
         self.assertNotIn(CARD['number'],str(prompts)+str(result))
 
+    def test_registered_link_noop_target_attributes_during_consent(self):
+        mapping = self.mapping(self.html())
+        def rewrite():
+            self.page.frames[1].evaluate('''()=>{
+                for(const e of document.querySelectorAll('input')){
+                    e.setAttribute('type',e.type);e.setAttribute('name',e.name);e.removeAttribute('form');
+                }
+            }''')
+            # Establish explicit attribute values before the retained snapshot.
+        rewrite()
+        result, _ = self._run_facility(field_mapping=mapping, issued_card=CARD,
+                                      registered=True, before_answer=lambda: [rewrite() for _ in range(5)])
+        self.assertTrue(result.get('success'), result)
+        self.assertEqual(result['filled_fields'],5)
+
     def test_registered_saved_card_mapping_genuine_native_vault_consent(self):
+        self.saved_card_fill()
+
+    def saved_card_fill(self, before_answer=None):
         import json
         from test_cards import CardTests
         from tools import approval
@@ -69,9 +87,16 @@ class MappingTests(unittest.TestCase):
         self.addCleanup(fixture.doCleanups)
         handle=fixture.save_card()
         mapping=self.mapping(self.html())
+        self.page.frames[1].evaluate('''()=>{
+            for(const e of document.querySelectorAll('input')){
+                e.setAttribute('type',e.type);e.setAttribute('name',e.name);
+            }
+        }''')
         prompts=[]
         def notify(data):
             prompts.append(data)
+            if before_answer:
+                before_answer()
             approval.resolve_gateway_approval('synthetic-key','once',request_id=data['request_id'])
         approval.register_gateway_notify('synthetic-key',notify)
         self.addCleanup(approval.unregister_gateway_notify,'synthetic-key')
@@ -89,6 +114,24 @@ class MappingTests(unittest.TestCase):
         self.assertTrue(self.page.frames[1].evaluate("document.querySelector('#name').value==='SYNTHETIC CARDHOLDER'"))
         self.assertIsNotNone(fixture.store.get_meta(handle))
         self.assertNotIn(CARD['number'],str(prompts)+str(result))
+
+    def test_registered_saved_card_presentation_mutations_during_consent(self):
+        def rewrite():
+            self.page.frames[1].evaluate('''()=>{
+                for(let i=0;i<5;i++)for(const e of document.querySelectorAll('input')){
+                    e.setAttribute('type',e.type);e.setAttribute('name',e.name);e.removeAttribute('form');
+                }
+            }''')
+            self.page.evaluate('''()=>{
+                for(let i=0;i<5;i++){
+                    const e=document.querySelector('iframe');
+                    e.setAttribute('frameborder','0');e.className='widget-'+i;
+                    e.parentElement.className='layout-'+i;
+                    e.parentElement.setAttribute('data-status','ready-'+i);
+                    e.style.borderWidth=i+'px';
+                }
+            }''')
+        self.saved_card_fill(before_answer=rewrite)
 
     def test_combined_mask_react_setter_and_explicit_billing_select(self):
         html='''<div><input id="pan"><input id="expiry"><select id="country"><option value="US">United States</option></select>
@@ -170,20 +213,36 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(failure.exception.written,0)
 
     def test_unknown_foreign_and_nonfield_nodes_are_refused(self):
-        mapping = self.mapping(self.html())
+        # backendNodeIds are renderer-scoped: an OOPIF's numeric ID can collide
+        # with a valid child input. Use two documents in the same renderer so
+        # this negative fixture actually names the foreign node, not an alias.
+        self.context.route('https://merchant.test/foreign-node-fixture',
+            lambda r:r.fulfill(content_type='text/html',body=self.html()))
+        self.page.locator('iframe').evaluate("e=>e.src='https://merchant.test/foreign-node-fixture'")
+        self.page.frames[1].wait_for_url('https://merchant.test/foreign-node-fixture')
+        self.page.frames[1].wait_for_load_state()
+        session=self.context.new_cdp_session(self.page)
+        root=session.send('DOM.getDocument')['root']['nodeId']
+        node=session.send('DOM.querySelector',dict(nodeId=root,selector='iframe'))['nodeId']
+        self.frame=session.send('DOM.describeNode',dict(nodeId=node))['node']['frameId']
+        session.detach()
+        mapping = self.mapping()
+        def same_origin_target(selected):
+            target = Target(self.capture,self.parent,self.frame,'https://merchant.test',
+                            'https://merchant.test',lambda:None,field_mapping=selected)
+            self.addCleanup(target.close)
+            return target
         parent_session = self.context.new_cdp_session(self.page)
         self.page.evaluate("()=>{const e=document.createElement('input');e.id='foreign-input';document.body.append(e)}")
         root = parent_session.send('DOM.getDocument')['root']['nodeId']
         iframe = parent_session.send('DOM.querySelector',dict(nodeId=root,selector='#foreign-input'))['nodeId']
         foreign = parent_session.send('DOM.describeNode',dict(nodeId=iframe))['node']['backendNodeId']
         parent_session.detach()
-        session = self.context.new_cdp_session(self.page.frames[1])
-        body = session.send('DOM.getDocument')['root']['children'][0]['children'][-1]['backendNodeId']
-        session.detach()
+        body = self.mapping(selectors=[('body','body')])['body']
         for invalid in [2147483647, foreign, body, True, '12', -1]:
             with self.subTest(kind=type(invalid).__name__,invalid=invalid):
                 with self.assertRaises(BindingRefused):
-                    self.target({**mapping,'cc-number':invalid})
+                    same_origin_target({**mapping,'cc-number':invalid})
 
     def test_replaced_selected_node_is_not_retargeted(self):
         mapping = self.mapping(self.html())
@@ -203,6 +262,29 @@ class MappingTests(unittest.TestCase):
         self.assertFalse(result['success'])
         self.assertEqual(result['stage'],'postconsent_target')
         self.assertTrue(result.get('reinspection_required'))
+
+    def test_actual_target_authority_changes_remain_sticky_during_consent(self):
+        mutations = [
+            "const e=document.querySelector('#pan');e.type='password';e.type='text'",
+            "const e=document.querySelector('#pan');e.setAttribute('form','other');e.removeAttribute('form')",
+            "const e=document.querySelector('#pan'),p=e.parentNode;p.removeChild(e);p.append(e)",
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                mapping=self.mapping(self.html())
+                result,_=self._run_facility(field_mapping=mapping,issued_card=CARD,
+                    registered=True,before_answer=lambda:self.page.frames[1].evaluate('()=>{'+mutation+'}'))
+                self.assertFalse(result['success'])
+                self.assertEqual(result['stage'],'postconsent_target')
+                self.assertTrue(self.page.frames[1].evaluate("document.querySelector('#pan').value==='old pan'"))
+
+    def test_mapped_iframe_destination_change_restore_is_sticky(self):
+        mapping=self.mapping(self.html())
+        target=self.target(mapping)
+        self.page.evaluate('''()=>{const e=document.querySelector('iframe');
+            const src=e.getAttribute('src');e.setAttribute('src','https://foreign.test/pay');e.setAttribute('src',src);}''')
+        with self.assertRaises(ValueError):
+            target.check()
 
     def test_explicit_fields_override_prefill_and_ignore_unrelated_layout(self):
         mapping = self.mapping(self.html())

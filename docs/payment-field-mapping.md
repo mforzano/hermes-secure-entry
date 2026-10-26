@@ -1,4 +1,4 @@
-# Explicit payment-field mapping (0.5.13 source candidate)
+# Explicit payment-field mapping (0.5.14)
 
 This supersedes the old automatic-layout admission contract **for the two
 registered plugin payment-fill tools**. It does not change Hermes's built-in
@@ -89,6 +89,10 @@ Windows ACL/ownership checks are unchanged.
   selected dependent billing. Missing source values refuse before any write.
   Replacement, removal/reinsertion, reparenting, form reassociation, type changes,
   document navigation and origin changes invalidate the retained destination.
+  No-op selected `type`/`form` assignments do not invalidate it; actual changes
+  followed by restoration remain sticky. Mapped iframe guards ignore iframe and
+  ancestor presentation rewrites, while retaining destination, document and node
+  identity checks. The internal legacy path keeps its previous mutation policy.
 - Parent/frame ownership, genuine native consent, authenticated DM/profile/session,
   lifecycle/deadline, task capture/takeover and private-secret fences remain.
   Parent/child checks are **not cross-document atomicity**. Changes after dispatch
@@ -121,15 +125,51 @@ combined masked expiry, separate expiry selects and two-digit years, prototype
 React-like setters, top-level root, cross-origin OOPIF and same-origin direct iframe.
 The same-origin fixture reproduces the supplied Gotham shape (raw `cc-cvc`, generic
 `name`, street/city/postal/country/state, phone controls, separate TOS/marketing).
-It proves synthetic compatibility with that shape, **not live Gotham acceptance or
-checkout completion**. Unknown/foreign/nonfield IDs and selected-node replacement
+It proves synthetic compatibility with that shape, not a purchase by itself.
+Unknown/foreign/nonfield IDs and selected-node replacement
 are tested. A target changed during consent refuses before private retrieval.
 
-## Activation needs — not performed by this change
+Separate live evidence: the operator's completed Gotham checkout exercised the
+mutation fix with a saved native card, reported five verified mapped fields,
+passed merchant acceptance and reached purchase confirmation. Local temporary-card
+deletion was verified afterward. This occurred before the 0.5.14 diagnostic/version
+bump; the release preserves the observed working writer behavior. No order,
+personal or card details are retained here. This is one live saved-card checkout,
+not proof of universal checkout support or live Link acceptance.
+
+Regression fixtures additionally exercise no-op selected attributes and iframe/
+ancestor presentation mutations during genuine native consent, through registered
+Link and saved-card dispatch. Actual type/form change-and-restore, selected-node
+removal/reinsertion and iframe destination change-and-restore still refuse.
+
+## Release verification
+
+The final isolated-home regression run returned:
+
+```text
+Ran 283 tests in 240.340s
+OK (skipped=4)
+```
+
+Command: `python -m unittest discover -s tests -q`, using the disposable
+`payment-layout-venv`, a fresh scratch `HERMES_HOME`, and explicit core/plugin
+roots on `PYTHONPATH`. Core imports came from the local Hermes source checkout;
+this is not a separate pristine-core compatibility claim. Fatal-error lint passed
+with `ruff check --isolated --select E9,F63,F7,F82 secure_entry tests`, and
+`git diff --check` passed. The broader inherited lint selection is not clean;
+this release does not undertake unrelated style/security-lint cleanup.
+
+Two initial full runs exposed an order-dependent negative fixture: a backend ID
+from the parent renderer could alias a valid OOPIF input. The fixture now uses
+same-origin documents sharing a renderer for a real foreign-document node and
+explicitly resolves its nonfield node. No production mapping/writer behavior was
+changed to make that test pass. The final full run above includes this fixture fix.
+
+## Installation and activation — separate from publication
 
 - Publish/install the final reviewed **immutable tested plugin revision** only when
-  separately authorized. The canonical source candidate is version **0.5.13**;
-  successful native results expose `payment_diagnostic_version: "0.5.13"`.
+  separately authorized. This release is version **0.5.14**;
+  successful native results expose `payment_diagnostic_version: "0.5.14"`.
 - This is plugin-only: no Hermes core patch, source rebuild, new plugin or additional
   production dependency is required. Existing manifest bound remains
   `>=0.22.1,<0.22.2`; native private-card handling remains Windows-specific and
@@ -139,7 +179,8 @@ are tested. A target changed during consent refuses before private retrieval.
   plugin. Enable and doctor the installed revision, then refresh plugin/tool
   registration and **start a fresh conversation/tool schema** so `field_mapping`
   is visible. A new gateway process is the fallback when safe unload/reload is not
-  available; activation has not been attempted here.
+  available. This publication does not install or reload the release; the live
+  checkout used the earlier coordinated activation of the mutation fix.
 - Existing Tailscale Serve URL/port and DM identity configuration need no payment
   mapping changes. Existing saved native card handles remain compatible. Link
   needs its existing operator-configured absolute `link_cli_command`; an empty

@@ -1,6 +1,6 @@
 name: secure-entry
-version: 0.5.13
-description: Private DM login/card entry and native OTP/unlock bridge, plus retained-browser Link or site-bound real-card fill and explicit verified card cleanup. In-process only; real-card route synthetic-tested, not live verified.
+version: 0.5.14
+description: Private DM login/card entry and native OTP/unlock bridge, plus retained-browser Link or site-bound real-card fill and explicit verified card cleanup. In-process only; mapped saved-card route synthetic-tested and verified in one live checkout.
 license: MIT
 requires_hermes: ">=0.22.1,<0.22.2"
 provides_tools:

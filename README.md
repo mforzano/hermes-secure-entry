@@ -17,7 +17,7 @@ Safari/VoiceOver testing remain unverified. See the [platform matrix](docs/platf
 ## Additional payment filler: agent selects, native code fills
 
 The plugin also ships a **custom payment filler**, distinct from Hermes's built-in
-`browser_vault(action="fill")`. In this **0.5.13 source candidate**, both
+`browser_vault(action="fill")`. In **0.5.14**, both
 `secure_entry_card_fill` and `secure_entry_payment_fill` require an explicit
 `field_mapping`: the agent inspects value-free DOM descriptors and backend node
 IDs, chooses the intended active controls and assigns their payment semantics.
@@ -53,9 +53,16 @@ the layout, re-resolve selectors after consent, submit payment or complete check
 Real isolated Chrome tests cover the mapped writer, genuine native consent with
 synthetic approval resolution, synthetic native-vault cards and Link private-file
 production. A synthetic **same-origin iframe** reproduces the supplied Gotham
-checkout shape; Gotham is not being classified as a cross-origin widget. **No
-live merchant checkout, real-card fill or purchase is claimed by these tests.**
-This candidate has not been installed, published or activated by this change.
+checkout shape; Gotham is not being classified as a cross-origin widget. These
+tests do not establish live acceptance. Separately, the operator's completed live
+Gotham checkout verified native mapped saved-card fill (five fields), merchant
+acceptance and purchase confirmation, followed by verified local temporary-card
+deletion. That checkout exercised the mutation fix before this release's version
+bump; it does not establish universal merchant compatibility or live Link acceptance.
+Version 0.5.14 preserves that working behavior: iframe/ancestor presentation
+updates and no-op selected-field attribute assignments do not invalidate mapped
+fills; actual selected destination/element changes still require reinspection.
+Publishing this release does not itself install or reload the plugin.
 See [mapping contract, evidence and activation needs](docs/payment-field-mapping.md).
 
 For supported native current-document forms, the built-in vault filler remains
