@@ -27,6 +27,16 @@ class Service:
         from .bridge import Bridge
         self.bridge = Bridge(self, dispatch, isolation)
 
+    def selected_payment_fill(self, args, **kwargs):
+        if not isinstance(args, dict) or 'field_mapping' not in args:
+            return json.dumps({'success':False,'status':'refused','refusal':'field_mapping_required'})
+        return self.payment_fill(args, **kwargs)
+
+    def selected_card_fill(self, args, **kwargs):
+        if not isinstance(args, dict) or 'field_mapping' not in args:
+            return json.dumps({'success':False,'status':'refused','refusal':'field_mapping_required'})
+        return self.card_fill(args, **kwargs)
+
     def payment_fill(self, args, **kwargs):
         return self.payment.fill(args, **kwargs)
 

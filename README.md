@@ -1,24 +1,66 @@
 # Hermes Secure Entry
 
-**0.5.10 generic payment topology and semantics:** the plugin now binds either an explicitly inspected top-level root frame or the existing direct payment iframe. Missing expiry/CVC autocomplete can be resolved from conservative labels/structural rows; numeric expiry SELECTs, opaque hidden postback state and ordinary action controls are supported without changing merchant attributes. Native task/document authority, consent, private-file handling and no-submit behavior remain intact. No core changes, live spends, installation or gateway activation were performed for this repair. [Contract, real-Chrome regressions, limits and activation instructions](docs/payment-topology-0510.md).
+**Private credential entry from a messaging DM, over your own Tailscale network.**
+The agent sends a short-lived, one-use link; you enter the password, verification
+code, manager-unlock password or card in the private page rather than in chat.
+The plugin hands the secret to Hermes's native vault or waiting native callback
+without returning its value to the model. It uses the **existing encrypted Hermes
+vault**, not a separate credential store. The listener is loopback-only, reached
+through an operator-configured, tailnet-only Tailscale Serve route. No Hermes core
+changes are bundled.
 
-**0.5.7 plugin-owned payment redaction:** PAN, CVC and complete expiry registration lives in `secure_entry.redaction` and uses only the existing native exact-value registration API. No new Hermes core helper, rebuild or dependency is required. Standalone expiry components and billing metadata do not become global substring rules. Generic password/OTP rules remain unchanged. Tests run against a pristine core snapshot without the new helper. Existing polluted process state is a separate recovery issue: reload prevents new pollution but cannot safely remove unattributed old entries. See [evidence and activation/recovery gates](docs/payment-redaction-repair.md).
+Photon, Discord and Telegram **DMs** are implemented. Photon login/OTP and patched-core
+Discord verification have operator-reported live evidence; Telegram has synthetic
+integration evidence only. Real manager unlock and comprehensive physical
+Safari/VoiceOver testing remain unverified. See the [platform matrix](docs/platforms.md).
 
-**0.5.5 standard postal-code support:** the native Link/card writer maps only unsectioned `postal-code` to billing postal code internally, retaining original page attributes and document/control/origin authority. Real isolated Chrome regressions cover masked combined expiry, CVC and ZIP, duplicate aliases and invalid controls, sticky attribute changes, and canonical conflict diagnostics. No live payment was used for this validation.
+## Additional payment filler: agent selects, native code fills
 
-**0.5.4 framework value-reflection fix:** permit only the current retained INPUT's exact-semantic self-write reflection, including normal PAN/expiry formatting; prewrite, foreign-field and mismatched/restored mutations still refuse. [Tests and limits](docs/payment-widget-054.md).
+The plugin also ships a **custom payment filler**, distinct from Hermes's built-in
+`browser_vault(action="fill")`. In this **0.5.13 source candidate**, both
+`secure_entry_card_fill` and `secure_entry_payment_fill` require an explicit
+`field_mapping`: the agent inspects value-free DOM descriptors and backend node
+IDs, chooses the intended active controls and assigns their payment semantics.
+Native code then retains those actual elements in the exact chosen document,
+requests native consent naming the target/frame, origins and mapping, privately
+retrieves the card and fills/verifies only those elements. It does not reinterpret
+the layout, re-resolve selectors after consent, submit payment or complete checkout.
 
-**0.5.3 widget-mutation fix:** tolerate card-brand/validation presentation updates after PAN input while retaining sticky control/ancestry/security-semantic mutation refusal. Supplied name/postal mismatch policy remains unchanged. [Tests and limits](docs/payment-widget-053.md). [Value-free diagnostics](docs/payment-writer-052.md).
+- **Why another filler?** The native filler in the tested Hermes contract inspects
+  its current document; this plugin provides explicit top-level or direct-iframe
+  targeting, including same-origin and cross-origin payment frames, and a native
+  consumer for Link's protected private-card-file transfer. These are additional
+  paths, not a replacement for the native vault or a claim about every Hermes version.
+- **Less restrictive about layouts:** selected fields need not have autocomplete
+  or belong to a single form/container. Other forms, alternative layouts, unknown
+  controls, billing/contact fields, checkboxes and unrelated mutations do not
+  block the selected mapping. Selected prefills can be overwritten. Unselected
+  controls are neither filled nor required to match the card. The old whole-page
+  classification rules were design choices, not inherent requirements for safe
+  private entry.
+- **Two card sources:** a merchant-bound saved native payment handle (with explicit
+  cleanup), or an already user-approved Link spend request transferred privately
+  by the local CLI. Native payment records encrypt and persist **CVC too**;
+  the entry form discloses this. Link remains a separate supported route and
+  does not save its temporary card in the vault.
+- **Limits:** the agent must interpret and select the right fields; native code
+  enforces the exact selected destination and verifies the private write, not the
+  correctness of the agent's interpretation. Node replacement/navigation requires
+  reinspection and renewed consent. Unsupported formatting, unavailable selected
+  fields or missing source billing data can refuse. `write_unknown` can mean a
+  partial fill. A successful native fill is not merchant acceptance or a purchase.
 
-**0.5.1 candidate — two payment routes:** approved temporary Link cards remain available unchanged. A new **real-card** route privately saves a native site-bound payment item, fills the explicitly consented merchant/payment-iframe pair through the same retained native browser writer, and offers explicit handle-based cleanup with verified absence. Choose it for user-selected real cards, hotel guarantees or deferred charges where temporary cards are unsuitable. Native payment storage encrypts **CVC too**; the entry page discloses persistence. No automatic deletion, purchase, reservation, live activation or live hotel verification is claimed. See [workflow, native APIs, CVC limitation, tests and installation](docs/real-card-payment.md).
+Real isolated Chrome tests cover the mapped writer, genuine native consent with
+synthetic approval resolution, synthetic native-vault cards and Link private-file
+production. A synthetic **same-origin iframe** reproduces the supplied Gotham
+checkout shape; Gotham is not being classified as a cross-origin widget. **No
+live merchant checkout, real-card fill or purchase is claimed by these tests.**
+This candidate has not been installed, published or activated by this change.
+See [mapping contract, evidence and activation needs](docs/payment-field-mapping.md).
 
-Prefer core `browser_vault(action=fill, handle=...)` for supported current-document native card forms. The retained plugin writer is needed for the explicit cross-origin iframe case that core's document-only inspection cannot reach. [0.5.1 reproduction, native-handler comparison and validation](docs/payment-widget-051.md).
-
-**Link route:** this branch includes the disabled-by-default native local Link CLI private-card handoff into an existing task-captured browser. It needs no new core patch and no per-site configuration. Default, named and hybrid BrowserUse routes are synthetic-integration-tested. It retains strict form/document binding and genuine native explicit payment consent; this route does not save a card or submit a purchase. “Local” describes the Link CLI source, not browser geography. See [research, security contract, tests and activation gates](docs/local-link-payment.md). Historical 0.3.0 behavior below describes the OTP/login/unlock preview.
-
-A separate Windows-native Hermes plugin for private, one-use credential-entry pages reached through Tailscale Serve. It registers tools and lifecycle hooks through `PluginContext`; it does not modify Hermes core.
-
-**Version 0.3.0 is a preview implementation for authorized Photon, Discord, and Telegram DMs.** It adds native encrypted vault logins and bridges native OTP and password-manager unlock callbacks to private forms. Photon add-login, OTP delivery and an authenticated browser page were operator-verified on installed 0.2.1; **the operator now reports successful live Discord verification with the patched Hermes core described below**. Telegram has synthetic integration tests only, not live verification. Real manager unlock and comprehensive physical Safari/VoiceOver testing remain unverified. OTP keeps the native browser protections; no new injector or core detector/tab-selection fix is bundled. Atomic update, sign-in-once, and save-and-sign-in remain unsupported. See the [tested versus live-verified platform matrix](docs/platforms.md), [core-fix scope](#related-hermes-core-fixes), and [native limits](docs/native-contract.md).
+For supported native current-document forms, the built-in vault filler remains
+available. Login/OTP/unlock capabilities and their separate native protections are
+unchanged. Atomic update, sign-in-once and save-and-sign-in remain unsupported.
 
 ## What works
 

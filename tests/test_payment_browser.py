@@ -71,7 +71,7 @@ class PaymentBrowserTests(unittest.TestCase):
 
     def _run_facility(
         self, choice="once", before_answer=None, issued_card=None, expected_prompts=1,
-        frame_origin="https://provider.test", registered=False,
+        frame_origin="https://provider.test", registered=False, field_mapping=None,
     ):
         from secure_entry.payment import LocalPayment
         from secure_entry.service import Service
@@ -130,7 +130,7 @@ class PaymentBrowserTests(unittest.TestCase):
             )
             facility = LocalPayment(service, [sys.executable, str(script)])
             service.payment = facility
-            handler=service.payment_fill
+            handler=service.selected_payment_fill if field_mapping is not None else service.payment_fill
             if registered:
                 from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
                 ctx=PluginContext(PluginManifest(name='synthetic-root-payment'),get_plugin_manager())
@@ -150,6 +150,7 @@ class PaymentBrowserTests(unittest.TestCase):
                             "merchant_origin": "https://merchant.test",
                             "frame_origin": frame_origin,
                             "spend_request_id": "lsrq_synthetic",
+                            **({'field_mapping':field_mapping} if field_mapping is not None else {}),
                         },
                         task_id="synthetic-payment",
                     )
@@ -664,7 +665,7 @@ class PaymentBrowserTests(unittest.TestCase):
         })
         self.assertEqual(result, {
             "success": False, "status": "write_unknown", "stage": "write",
-            "payment_diagnostic_version": "0.5.12",
+            "payment_diagnostic_version": "0.5.13",
             "refusal": "initial_mismatch", "field": "cc-name", "written_fields": 0,
         })
 
@@ -821,7 +822,7 @@ class PaymentBrowserTests(unittest.TestCase):
                     status="refused",
                     stage="target_binding",
                     refusal=category,
-                    payment_diagnostic_version="0.5.12",
+                    payment_diagnostic_version="0.5.13",
                 ),
             )
 
@@ -1279,7 +1280,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 success=True,
                 status="filled",
                 filled_fields=4,
-                payment_diagnostic_version="0.5.12",
+                payment_diagnostic_version="0.5.13",
             ),
         )
         for metadata in card["billing_address"].values():
@@ -1571,7 +1572,7 @@ class PaymentBrowserTests(unittest.TestCase):
                 "success": True,
                 "status": "filled",
                 "filled_fields": 4,
-                "payment_diagnostic_version": "0.5.12",
+                "payment_diagnostic_version": "0.5.13",
             },
         )
         self.assertIn("https://merchant.test", prompts[0]["command"])
@@ -1659,7 +1660,7 @@ class PaymentBrowserTests(unittest.TestCase):
             {
                 "success": False,
                 "status": "payment_declined",
-                "payment_diagnostic_version": "0.5.12",
+                "payment_diagnostic_version": "0.5.13",
             },
         )
         self.assertEqual(

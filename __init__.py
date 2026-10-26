@@ -13,7 +13,7 @@ def register(ctx):
     service.payment = LocalPayment(service, ctx.get_config('link_cli_command', default=[]))
     ctx.register_middleware('tool_execution', service.middleware)
     definitions = [
-        ('secure_entry_card_fill', service.card_fill,
+        ('secure_entry_card_fill', service.selected_card_fill,
          'Fill a privately saved real card by native vault metadata handle. In addition to Link, not a replacement. '
          'First determine the official checkout merchant origin, request operation=add_card bound to that origin, '
          'and retain the saved cleanup handle. Native explicit consent authorizes this merchant and payment-frame pair only. '
@@ -33,7 +33,7 @@ def register(ctx):
          {'handle':{'type':'string','description':'Exact native payment cleanup handle.'},
           'merchant_origin':{'type':'string','description':'Exact saved HTTPS merchant origin.'}},
          ['handle','merchant_origin']),
-        ('secure_entry_payment_fill', service.payment_fill,
+        ('secure_entry_payment_fill', service.selected_payment_fill,
          'Native local Link CLI private-card handoff into the existing task-captured browser. Requires an already user-approved Link spend request; '
          'asks separate native explicit payment consent. Binds the task-selected parent and explicit payment '
          'document before retrieval: top-level root frame or direct iframe. Windows only; standard cc autocomplete '
@@ -62,6 +62,26 @@ def register(ctx):
          {'request_id':{'type':'string'}}, ['request_id']),
     ]
     for name, handler, description, properties, required in definitions:
+        if name in ('secure_entry_card_fill', 'secure_entry_payment_fill'):
+            from .secure_entry.payment_browser import WriteRefused
+            properties['field_mapping'] = {
+                'type': 'object', 'minProperties': 1, 'additionalProperties': False,
+                'properties': {token: {'type':'integer','minimum':1}
+                               for token in sorted(WriteRefused.TOKENS)},
+                'description': 'Explicit semantic-to-backendDOMNodeId mapping from value-free inspection of this exact payment document. '
+                'Choose only the intended active fields; autocomplete is not required. Never include unrequested billing/contact fields. '
+                'Native code retains these actual elements before consent, overwrites selected prefills, and never retargets selectors. '
+                'Use cc-csc for CVC; cc-exp OR cc-exp-month plus cc-exp-year. Native refusal after a target change requires reinspection.',
+            }
+            required = [*required, 'field_mapping']
+            description = ('Native payment fill of an agent-selected explicit field mapping in the exact inspected top-level root or direct iframe. '
+                'Inspect value-free DOM/backend node IDs first, interpret the fields, then supply field_mapping. '
+                'No whole-page/form classifier, autocomplete requirement, unknown-control or duplicate-layout gate applies to this mapping. '
+                'Unselected billing, contact, consent and other forms are untouched. '
+                'Separate native consent binds the exact retained targets, document and origins before private retrieval. '
+                'Never supplies secrets to the model; never submits, purchases or deletes. write_unknown can mean a partial fill. '
+                + ('Uses the saved merchant-bound vault handle; retain it for explicit cleanup.' if name=='secure_entry_card_fill' else
+                   'Requires an already approved Link spend request; private native CLI handoff, no vault save.'))
         ctx.register_tool(name=name, toolset='secure_entry', handler=handler,
                           schema={'name':name, 'description':description,
                                   'parameters':{'type':'object','properties':properties,'required':required,'additionalProperties':False}})

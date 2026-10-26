@@ -18,7 +18,7 @@ from .payment_file import PrivateCard, PrivateFileRefused
 from .payment_browser import BindingRefused, Target, WriteRefused
 
 
-PAYMENT_DIAGNOSTIC_VERSION = "0.5.12"
+PAYMENT_DIAGNOSTIC_VERSION = "0.5.13"
 
 
 class RetrievalRefused(ValueError):
@@ -145,6 +145,12 @@ class LocalPayment:
                     raise ValueError("operation_cancelled")
                 generation = self.service.generation
             bound = owner(self.service.home)
+            # Copy metadata once: caller mutations cannot change selected nodes
+            # or the semantic mapping displayed by native consent.
+            args = dict(args)
+            if 'field_mapping' in args:
+                from .payment_mapping import validate_mapping
+                args['field_mapping'] = dict(validate_mapping(args['field_mapping'], WriteRefused.TOKENS))
             merchant = validate_origin(args["merchant_origin"])
             provider = validate_origin(args["frame_origin"])
             rid = self.card_source.identifier(args, merchant) if self.card_source else args["spend_request_id"]
@@ -195,7 +201,8 @@ class LocalPayment:
                 current()
                 stage = "target_binding"
                 target = Target(
-                    capture, args["parent"], args["frame"], merchant, provider, guard
+                    capture, args["parent"], args["frame"], merchant, provider, guard,
+                    **({'field_mapping': args['field_mapping']} if 'field_mapping' in args else {}),
                 )
                 stage = "native_consent"
                 wait_before = human_wait_seconds(bound[-2])
@@ -211,6 +218,11 @@ class LocalPayment:
                     f"Fill saved payment on merchant {merchant}; payment frame {provider}; handle {rid}" if self.card_source else
                     f"Fill Link payment on merchant {merchant}; payment frame {provider}; request {rid}",
                     topology_disclosure + (
+                    f'Exact page target {target.parent}; payment frame {target.frame}. Explicit selected fields: ' + ', '.join(
+                        f'{token}=backendNodeId:{node}' for token, node in args['field_mapping'].items()
+                    ) + '. Prefilled selected fields may be overwritten. '
+                    if 'field_mapping' in args else ''
+                    ) + (
                     "Enter the site-bound saved card into this exact authorized merchant/payment-frame pair. "
                     "This does not submit, reserve or purchase. Card remains saved; explicitly delete after verifying checkout outcome." if self.card_source else
                     "Enter the approved one-time Link card into this exact checkout document. "
@@ -328,6 +340,12 @@ class LocalPayment:
                 }
             elif stage == "post_retrieval_target_check":
                 diagnostic = {"refusal": "target_check_failed"}
+            if isinstance(args, dict) and 'field_mapping' in args and (
+                isinstance(exc, BindingRefused) or
+                stage in {'postconsent_target', 'post_retrieval_target_check'} or
+                isinstance(exc, WriteRefused) and exc.category == 'invalidated'
+            ):
+                diagnostic['reinspection_required'] = True
             return json.dumps(
                 {
                     "success": False,

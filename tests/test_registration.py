@@ -4,6 +4,17 @@ from pathlib import Path
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_registered_handlers_refuse_omitted_mapping(self):
+        import json
+        from secure_entry.service import Service
+        from hermes_constants import get_hermes_home
+        service=Service('https://example.invalid',str(get_hermes_home()),port=0)
+        self.addCleanup(service.close)
+        for method in ('selected_card_fill','selected_payment_fill'):
+            self.assertTrue(callable(getattr(service,method,None)), 'public mapped handler missing')
+            result=json.loads(getattr(service,method)({}))
+            self.assertEqual(result.get('refusal'),'field_mapping_required')
+
     def test_registration_uses_only_public_plugin_methods_and_no_listener(self):
         path = Path(__file__).resolve().parents[1]
         spec = importlib.util.spec_from_file_location('secure_entry_plugin_test', path / '__init__.py',
@@ -25,6 +36,10 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(set(ctx.tools), {'secure_entry_request', 'secure_entry_status', 'secure_entry_cancel',
             'secure_entry_payment_fill', 'secure_entry_card_fill', 'secure_entry_card_remove'})
         self.assertIn('add_card', ctx.tools['secure_entry_request']['schema']['parameters']['properties']['operation']['enum'])
+        for name in ('secure_entry_payment_fill','secure_entry_card_fill'):
+            parameters=ctx.tools[name]['schema']['parameters']
+            self.assertIn('field_mapping',parameters['required'])
+            self.assertEqual(parameters['properties']['field_mapping']['properties']['cc-number']['type'],'integer')
         for name in ('secure_entry_payment_fill','secure_entry_card_fill'):
             schema=ctx.tools[name]['schema']
             self.assertIn('root',schema['parameters']['properties']['frame']['description'])

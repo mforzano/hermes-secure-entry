@@ -1,15 +1,14 @@
 """Registered payment facility's exact-document browser transport.
 
-Only native CapturedCDP handles; never endpoint discovery, page searching, main
-world injection, model JavaScript/selectors, or submission. Deliberately strict:
-one explicit root document or direct iframe, one form or cohesive container.
-Standard PAN autocomplete anchors labeled expiry/CVC inference; PAN/CVC and
-expiry INPUTs must be empty. Numeric expiry SELECT defaults may be replaced;
-matching issued public billing stays private.
+Public tools use agent-selected backend-node mappings (payment_mapping.py).
+CapturedCDP resolves each actual element once in an isolated world before
+native consent. No selectors or page classifier participate in that path.
+The legacy CHILD closure is retained only for internal compatibility/regression
+callers that omit mapping; registered payment tools refuse omitted mappings.
+No endpoint discovery, main-world secret injection or payment submission.
 Parent pre/post checks are not an atomic cross-document no-disclosure fence.
-Inspired by the reviewed secure-env-ingress design; no source copied (upstream
-has no declared license). Remote object IDs retain document/node identity in an
-isolated world; navigation destroys them rather than retargeting a new document.
+Remote object IDs retain document/node identity; navigation destroys them rather
+than retargeting a new document.
 """
 
 import secrets
@@ -332,7 +331,8 @@ class BindingRefused(ValueError):
 
 
 class Target:
-    def __init__(self, capture, parent, frame, merchant, provider, guard):
+    def __init__(self, capture, parent, frame, merchant, provider, guard, *, field_mapping=None):
+        self.field_mapping = field_mapping
         self.capture, self.guard = capture, guard
         self.parent, self.frame = parent, frame
         self.merchant, self.provider = merchant, provider
@@ -370,9 +370,7 @@ class Target:
                 self.offsite_root = provider != merchant
                 context = self.world(root, self.psid)
                 category = "form_layout"
-                self.cg = self.remote(
-                    "Runtime.evaluate", {"expression": CHILD, "contextId": context}, self.psid
-                )
+                self.cg = self.bind_fields(context, self.psid)
                 self.pg = self.cg
                 if self.invoke(self.psid, self.cg, "function(){return this.origin;}") != provider:
                     raise ValueError("target_refused")
@@ -408,11 +406,7 @@ class Target:
                 self.attached = True
                 context = self.world(frame, self.csid)
             category = "form_layout"
-            self.cg = self.remote(
-                "Runtime.evaluate",
-                {"expression": CHILD, "contextId": context},
-                self.csid,
-            )
+            self.cg = self.bind_fields(context, self.csid)
             category = "frame_lineage"
             if (
                 self.invoke(self.csid, self.cg, "function(){return this.origin;}")
@@ -426,6 +420,33 @@ class Target:
         except BaseException:
             self.close()
             raise
+
+    def bind_fields(self, context, sid):
+        if self.field_mapping is None:
+            return self.remote('Runtime.evaluate', {'expression': CHILD, 'contextId': context}, sid)
+        from .payment_mapping import MAPPED, validate_mapping
+        mapping = validate_mapping(self.field_mapping, WriteRefused.TOKENS)
+        # Resolving an inspected backend ID retains the actual element. Never
+        # query by selector or resolve again after consent. The closure checks
+        # ownerDocument against this exact captured execution context.
+        nodes = []
+        try:
+            for backend in mapping.values():
+                node = self.call('DOM.resolveNode', {
+                    'backendNodeId': backend, 'executionContextId': context,
+                    'objectGroup': self.group,
+                }, sid)['object']['objectId']
+                nodes.append(node)
+            return self.remote('Runtime.callFunctionOn', {
+                'executionContextId': context, 'functionDeclaration': MAPPED,
+                'arguments': [{'value': list(mapping)}] + [{'objectId': node} for node in nodes],
+            }, sid)
+        finally:
+            for node in nodes:
+                try:
+                    self.call('Runtime.releaseObject', {'objectId': node}, sid, cleanup=True)
+                except Exception:
+                    pass
 
     def attach_frame(self, frame, timeout=5):
         # A finite CDP timeout can discard a successful attachment's late ID.

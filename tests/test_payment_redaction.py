@@ -101,7 +101,7 @@ class PaymentRedactionTests(unittest.TestCase):
             result = json.loads(facility.fill(args, task_id="synthetic-payment"))
             self.assert_payment_redaction()
             self.assertTrue(result["success"], result)
-            self.assertEqual(result["payment_diagnostic_version"], "0.5.12")
+            self.assertEqual(result["payment_diagnostic_version"], "0.5.13")
 
     def test_add_card_registers_secrets_before_native_storage_without_url_fragments(self):
         test = self
