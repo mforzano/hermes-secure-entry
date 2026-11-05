@@ -1,6 +1,12 @@
 # Hermes Secure Entry
 
-**Private credential entry from a messaging DM, over your own Tailscale network.**
+**Private credential entry over your own Tailscale network, with links delivered by DM.**
+
+Photon, Discord and Telegram DMs are supported. A narrow native OTP/list/unlock
+bridge also admits authorized Telegram group topics, sending private-entry links
+only to the requesting human's DM while the original topic's browser task continues.
+Standalone login/card entry, payment, card removal and plugin status/cancel tools
+remain DM-only. See [the topic contract and compatibility limits](docs/telegram-topics.md).
 The agent sends a short-lived, one-use link; you enter the password, verification
 code, manager-unlock password or card in the private page rather than in chat.
 The plugin hands the secret to Hermes's native vault or waiting native callback
@@ -9,9 +15,10 @@ vault**, not a separate credential store. The listener is loopback-only, reached
 through an operator-configured, tailnet-only Tailscale Serve route. No Hermes core
 changes are bundled.
 
-Photon, Discord and Telegram **DMs** are implemented. Photon login/OTP and patched-core
-Discord verification have operator-reported live evidence; Telegram has synthetic
-integration evidence only. Real manager unlock and comprehensive physical
+Photon login/OTP and patched-core Discord verification have historical operator
+live evidence. Separately, an operator reported a successful Telegram topic → private
+web link → native fill → confirmed website login flow. These are not exact-candidate
+Windows validation or comprehensive live coverage. Real manager unlock and physical
 Safari/VoiceOver testing remain unverified. See the [platform matrix](docs/platforms.md).
 
 ## Additional payment filler: agent selects, native code fills
@@ -50,15 +57,14 @@ the layout, re-resolve selectors after consent, submit payment or complete check
   fields or missing source billing data can refuse. `write_unknown` can mean a
   partial fill. A successful native fill is not merchant acceptance or a purchase.
 
-Real isolated Chrome tests cover the mapped writer, genuine native consent with
-synthetic approval resolution, synthetic native-vault cards and Link private-file
-production. A synthetic **same-origin iframe** reproduces the supplied Gotham
-checkout shape; Gotham is not being classified as a cross-origin widget. These
-tests do not establish live acceptance. Separately, the operator's completed live
-Gotham checkout verified native mapped saved-card fill (five fields), merchant
-acceptance and purchase confirmation, followed by verified local temporary-card
-deletion. That checkout exercised the mutation fix before this release's version
-bump; it does not establish universal merchant compatibility or live Link acceptance.
+Historical isolated Chrome tests cover the mapped writer, genuine native consent
+with synthetic approval resolution, synthetic native-vault cards and Link
+private-file production. A synthetic **same-origin iframe** reproduces one observed
+checkout shape; it is not evidence of a cross-origin widget or live acceptance.
+Separately, an operator-reported checkout verified native mapped saved-card fill,
+merchant acceptance and purchase confirmation, followed by local temporary-card
+deletion. That historical result does not establish universal merchant compatibility,
+live Link acceptance or a passing full suite for the current topic candidate.
 Version 0.5.14 preserves that working behavior: iframe/ancestor presentation
 updates and no-op selected-field attribute assignments do not invalidate mapped
 fills; actual selected destination/element changes still require reinspection.
@@ -80,7 +86,7 @@ unchanged. Atomic update, sign-in-once and save-and-sign-in remain unsupported.
 
 ## Scope and priorities
 
-1. Ship the achievable **add-vault-login** path as a preview/testing-only partial implementation.
+1. Standalone **add-vault-login** is a preview/testing-only partial implementation. The separate card/payment facilities above remain DM-only.
 2. For replacement, add the new login and verify its metadata first. Inspect the new and old handles using the existing native vault tools. Remove the old item only through those existing tools **after explicit user approval**. The plugin never deletes automatically, never implements delete-then-add, and does not call this an atomic same-record update. If a save is `commit_unknown`, inspect the vault before retrying or considering any removal.
 3. Exercise the implemented native **OTP callback preview** with synthetic data before real use. No OTP form exists until the native tool inspects an actual code field and supplies its site.
 
@@ -88,19 +94,35 @@ unchanged. Atomic update, sign-in-once and save-and-sign-in remain unsupported.
 
 ## Native OTP and unlock preview
 
-Requires `plugins.isolation: in_process`. The bridge refuses host isolation, cron, headless/API, delegated children, group chats, missing task-local identity, mismatched profile, and mismatched middleware/session correlation. It never changes `can_prompt_here` or installs a dummy unlock approval.
+Requires `plugins.isolation: in_process`. The bridge refuses host isolation, cron,
+headless/API, delegated children, missing task-local identity, mismatched profile
+and middleware/session correlation. Group contexts are refused **except** the
+documented Telegram-topic native `enter_code` (without a handle), `list` and
+`unlock` path. Other native actions retain their own policy. It never changes
+`can_prompt_here` or installs a dummy unlock approval. A native group grant can
+authorize identified human members; this is not an extra per-user allowlist.
+Native `list` metadata returned to a topic may be visible to its participants.
 
 1. On a real inspected login page, use native `browser_vault(action="list")`. A locked manager can then be unlocked with native `browser_vault(action="unlock", backend="bitwarden")` (or `onepassword`); its genuine masked form asks for that manager's master password, never a website password.
 2. When a page asks for a verification code, call native `browser_vault(action="enter_code")` **without a handle**. `secure_entry_request(operation="verification_code", ...)` only returns this instruction; it does not create a code collector for a model-supplied site. This preview continues to reject nonempty OTP handles before native execution; saved-seed automatic TOTP through a handle is not enabled or newly claimed by this compatibility repair.
-3. Native inspection supplies the site and arms a one-use code form. The bridge calls native `send_message` with a destination constructed only from this authenticated DM context, then waits on the tool worker for up to 180 seconds across the execution. The gateway must remain able to send while the worker waits. Delivery failure revokes the request. No secret enters dispatch arguments or results.
+3. Native inspection supplies the site and arms a one-use code form. In an originating DM, the bridge uses native `send_message` with the authenticated DM destination. In an authorized Telegram topic, it uses a separate non-mirroring native Telegram path to the requesting human's DM, with one attempt and no group fallback. The bot must already be reachable in that user's private chat. The worker waits for up to 180 seconds across execution; the gateway must remain able to send. Delivery failure revokes the request. No submitted secret enters dispatch arguments or results.
 4. Open the link and enter the code in its masked field. HTTP POST hands the value through memory to the waiting native callback; native redaction, origin/inspection-nonce checks, supervisor-only secret write and takeover fences remain in force. The plugin never types via browser JavaScript or clicks Submit. Some websites auto-submit after a code is filled.
 5. `filled` means the native handler reported a fill, **not authenticated**. `unlocked` means the manager reported unlock. Cancel/expiry/unload before handoff accepts no later input. Once handed off, status is `commit_unknown` until a verified native result; cancellation cannot promise to undo a native action. Inspect the browser/manager before retrying an unknown outcome. No-code-field/passkey/app approval remains a typed native refusal: complete that approval on the actual device.
 
-**The private capability URL may be visible to the model/session history**, because native `send_message` mirrors sent text. Codes and passwords are not included. This is not transcript-free link delivery. Anyone with a link and tailnet access can submit it. Native tab-selection ambiguity and same-origin DOM limitations are unresolved; inspect the intended page first and do not claim exact immutable target/frame/generation binding.
+**Existing DM delivery can mirror the capability URL into model/session history.**
+That behavior is unchanged. The topic path avoids send-tool dispatch and native
+mirroring; this is not a blanket transcript-free delivery claim. Codes and passwords
+are not included. Anyone with the link and tailnet access can submit it, including a
+forwarded recipient: the page does not prove phone or Telegram identity. Topic-owned
+requests cannot be adopted by DM status/cancel tools; use web **Cancel**. Idle `/stop`
+is not reliable revocation. New topic traffic/cache changes can invalidate handoff.
+Native tab-selection ambiguity and same-origin DOM limitations are unresolved;
+inspect the intended page first and do not claim exact immutable target/frame/generation
+binding. See [expiry and cancellation](docs/telegram-topics.md#expiry-cancellation-and-browser-lifetime).
 
 ## Install and activation
 
-Use **Hermes 0.22.1–0.22.5**; the manifest is bounded to `>=0.22.1,<0.22.6`. Version 0.5.15 revalidates the native registered vault actions and callbacks on the actual selected 0.22.5 runtime; see [compatibility evidence](docs/hermes-0.22.5.md). Python requirements are supplied by Hermes. The plugin declares no additional Python dependencies. Use the PM-prepared Hermes interpreter, not an unrelated system Python and not raw pip against the live runtime.
+The manifest remains bounded to **Hermes `>=0.22.1,<0.22.6`**. Earlier native action/callback evidence is recorded in the [0.22.5 compatibility notes](docs/hermes-0.22.5.md). Topic PR-preparation tests use Windows CI's exact Hermes source pin `046094df28b712f62a5e3c728a9e59da05dcbf1e`, with isolated Python 3.14.6 on macOS; they do not validate every version in the manifest range. Exact-candidate Windows CI remains required. Python requirements are supplied by Hermes; the plugin declares no additional Python dependencies. Use the PM-prepared interpreter, not raw pip against the live runtime. Private API compatibility must be reviewed after updates; see [topic evidence](docs/telegram-topics.md#compatibility-and-evidence).
 
 ### Direct GitHub install (supported Hermes CLI)
 
@@ -115,7 +137,7 @@ hermes plugins doctor secure-entry --ci
 hermes plugins capabilities secure-entry
 ```
 
-The supported CLI accepts `owner/repo` directly; `--yes-deps` supplies dependency-preparation consent and `--enable` requests enablement. This is a direct GitHub install, not a claim of reviewed catalog admission. For a reproducible install, add `--ref` with a full immutable 40-character commit SHA.
+The supported CLI accepts `owner/repo` directly; `--yes-deps` supplies dependency-preparation consent and `--enable` requests enablement. This is a direct GitHub install, not a claim of reviewed catalog admission. For a reproducible install, add `--ref` with a full immutable 40-character commit SHA. The upstream install command is not a claim that an unpublished topic candidate is available there; use only a reviewed revision that actually contains the feature.
 
 **GitHub installation alone does not configure Tailscale Serve, select `in_process` isolation, or guarantee that every website's OTP form will work.** Configure the [dedicated tailnet-only HTTPS route](#tailscale-deployment-operator-owned) separately, preserve unrelated routes, and ensure the client device has authorized tailnet access. The settings above do not create that route. Then start a new gateway process and a new conversation; enablement alone is not verified activation. For an existing installation, coordinate unloading/stopping the running middleware before a supported update/reinstall; never overwrite its active copy. See [core-fix scope](#related-hermes-core-fixes) for affected native OTP detection/selection failures.
 
@@ -141,12 +163,12 @@ Or add `--enable` to the source staging command. Set `plugins.isolation` to `in_
 
 ## Related Hermes core fixes
 
-**Stock Hermes 0.22.1 can use this bridge for OTP forms that its native detector selects and recognizes. Neither pending PR is a universal prerequisite, and add-login is independent of these OTP fixes.** The plugin transports native prompts; it does not patch browser selection or field recognition. Affected sites/widgets can need the corresponding core fix:
+**Stock Hermes 0.22.1 can use this bridge for OTP forms that its native detector selects and recognizes. Neither linked change is a universal prerequisite, and add-login is independent of these OTP fixes.** The plugin transports native prompts; it does not patch browser selection or field recognition. The following historical core-fix references explain site/widget limits, not their current merge/release status:
 
-- [NousResearch/hermes-agent #136831](https://github.com/NousResearch/hermes-agent/pull/136831) — **open/pending**: selects visible OTP fields and, when a saved login handle is supplied to core, binds selection to that handle's allowed origins. It addresses false `no_code_field` failures caused by unrelated tabs with hidden postal/country-code controls. This plugin's preview still refuses nonempty OTP handles; the PR does not enable them here or establish immutable target binding.
-- [NousResearch/hermes-agent #139405](https://github.com/NousResearch/hermes-agent/pull/139405) — **open/pending**: recognizes explicit “enter [the/a] [4–8] digit code” labels and complete, ordered, adjacent 1..N numbered OTP widgets (4–8 digits), with shared actual form/container identity. Invalid/incomplete/mixed groups and unrelated code-like fields are rejected. The updated PR reports 127 focused tests passing on Windows and a real United six-box challenge filled through native private entry; Continue reached the authenticated account menu. That is patched-core evidence, not stock 0.22.1 coverage or proof of all sites.
+- [NousResearch/hermes-agent #136831](https://github.com/NousResearch/hermes-agent/pull/136831) — selects visible OTP fields and, when a saved login handle is supplied to core, binds selection to that handle's allowed origins. It addresses false `no_code_field` failures caused by unrelated tabs with hidden postal/country-code controls. This plugin's preview still refuses nonempty OTP handles; the change does not enable them here or establish immutable target binding.
+- [NousResearch/hermes-agent #139405](https://github.com/NousResearch/hermes-agent/pull/139405) — recognizes explicit digit-count code labels and complete, ordered, adjacent numbered OTP widgets with shared actual form/container identity. Historical patched-core tests and live verification are separate from this plugin's suite, not stock 0.22.1 coverage or proof of all sites.
 
-The operator's successful live Discord verification used patched core, including the additional numbered-widget fix in #139405. Do not infer that both PRs must be applied for every use, that they are merged into stock Hermes, or that Telegram is live verified. See the [platform evidence and stock-versus-patched limits](docs/platforms.md).
+Historical live Discord verification used patched core, including the numbered-widget fix in #139405. Do not infer that both changes are needed for every site or merged into every supported release. The separate reported Telegram topic login does not establish a particular stock-core version or comprehensive Telegram coverage. See the [platform evidence and stock-versus-patched limits](docs/platforms.md).
 
 ## Tailscale deployment (operator-owned)
 
@@ -185,6 +207,10 @@ These are diagnostic refusals, not evidence of authentication or permission to b
 the native checks. Status/cancel ownership misses remain opaque. Native terminal
 outcomes, including `commit_unknown`, retain their existing meaning.
 
+Intermittent live `admission_unavailable` and observed browser resets have not been
+root-caused. This contribution does not claim to fix either. For topic-specific
+source-cache, DM-delivery and cancellation checks, see [troubleshooting](docs/telegram-topics.md#troubleshooting-and-rollback).
+
 ```bash
 python -m secure_entry.cli diagnose
 python -m secure_entry.cli demo --public-base-url https://your-machine.example-tailnet.ts.net:9443 --seconds 600
@@ -194,6 +220,15 @@ python -m secure_entry.cli health
 Demo uses an actual native encrypted vault in a disposable scratch directory, **not the live vault**. It accepts only the printed synthetic username `synthetic@example.invalid` and password `SYNTHETIC-DEMO-ONLY`. Other values fail without saving. The dummy link is printed intentionally for operator testing and expires with the process. No real browser fill is attempted or claimed. After the operator enables the dedicated Serve route, open this link on the phone to test Safari/VoiceOver and Tailscale. `Ctrl+C`/automatic expiry stops the listener and deletes the dummy vault. Never enter real credentials in demo mode.
 
 ## Tests
+
+The PR-preparation comparison used isolated Python 3.14.6 and Hermes source
+`046094df28b712f62a5e3c728a9e59da05dcbf1e` on macOS: **109 focused candidate tests
+passed**, and **15 topic tests passed in each of three fresh processes**, without
+skips. Full upstream/candidate runs (282/297 tests) each had **20 failures and 23
+errors**, with matching failure/error heading multisets in inherited Windows
+ACL/private-file/payment paths. Neither full local suite is green. Exact-candidate
+Windows CI remains a publication gate; no production runtime defect or repair was
+demonstrated. See [evidence and coverage limits](docs/telegram-topics.md#compatibility-and-evidence).
 
 Build an isolated test environment using Hermes's documented PM workflow, outside the live runtime:
 
@@ -213,6 +248,15 @@ The tests use synthetic inputs only and temporary native vaults. Coverage includ
 
 ## Disclosure
 
-The plugin opens a local HTTP server, uses the native encrypted vault, and returns/sends opaque links and request metadata to the originating conversation. Password/code values travel only from the private page through memory to the native store or waiting native callback. No telemetry, external assets, third-party collection service, login auto-click, passkey emulation, saved-password reads, or generic credential-injection API. The unreleased payment candidate is a separate narrowly registered native facility, disabled by default; it does not reuse the OTP form as payment approval. OTP and unlock remain preview features, not production authentication claims.
+The plugin opens a local HTTP server and uses the native encrypted vault. Standalone
+DM requests return opaque links and metadata to that conversation; native topic
+prompts deliver the capability privately to the requesting human's DM. Native
+metadata/results can remain in the originating topic. Password/code values travel
+only from the private page through memory to the native store or waiting callback.
+No telemetry, external assets, third-party collection service, login auto-click,
+passkey emulation, saved-password reads, or generic credential-injection API.
+The separate DM-only payment facilities use native payment consent, not the OTP
+form; an empty `link_cli_command` disables Link retrieval, not the saved-card route.
+OTP and unlock remain preview features, not production authentication claims.
 
 Architecture/reference research included the Linux/Telegram `hermes-secure-env-plugin` project; no source was copied. This is an independent Windows/Photon/native-vault implementation, not an environment-variable ingress port.

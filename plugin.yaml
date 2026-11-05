@@ -1,6 +1,6 @@
 name: secure-entry
-version: 0.5.15
-description: Private DM login/card entry and native OTP/unlock bridge, plus retained-browser Link or site-bound real-card fill and explicit verified card cleanup. In-process only; mapped saved-card route synthetic-tested and verified in one live checkout.
+version: 0.5.15+topics.1
+description: Private DM login/card entry and native OTP/list/unlock bridge, including authorized Telegram topics with requester-only DM link delivery. Standalone entry and payment tools remain DM-only. In-process only; native consent for Link or saved-card fill, with explicit saved-card cleanup.
 license: MIT
 requires_hermes: ">=0.22.1,<0.22.6"
 provides_tools:
@@ -23,7 +23,7 @@ config_schema:
   link_cli_command:
     type: list
     default: []
-    description: Trusted absolute executable argv prefix for local Link CLI; empty disables payment. Use native node.exe plus absolute CLI entrypoint, never cmd/bat or shell commands. No live activation until reviewed.
+    description: Trusted absolute executable argv prefix for local Link CLI; empty disables Link retrieval, not saved-card fill. Use native node.exe plus absolute CLI entrypoint, never cmd/bat or shell commands. Review the CLI before activation.
   public_base_url:
     type: str
     default: https://example.invalid:9443

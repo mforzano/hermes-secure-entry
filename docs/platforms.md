@@ -1,50 +1,114 @@
-# DM platform scope and verification (0.3.0)
+# Platform scope and verification
 
-Secure Entry enumerates **Photon, Discord, Telegram** only. This is not an all-platform prompt provider. Existing broker, secret-handling, HTTP, browser, and manager contracts are unchanged. Hermes must already have authenticated and authorized the originating native session. Platform names, home/profile, DM type, chat ID, sender ID, session key and session ID come from native task-local context, never tool arguments or process-environment fallback.
+Secure Entry supports **Photon, Discord and Telegram DMs**, plus the narrow
+**Telegram topic → requester DM native OTP/list/unlock bridge**. It is not an
+all-platform prompt provider. Hermes must authenticate and authorize the source;
+platform, home/profile, chat type, chat/sender and session identity come from native
+task-local context, never model arguments or process-environment fallback.
 
 ## Evidence matrix
 
-| Surface | Add-login / status / cancel | Native OTP / unlock / lifecycle | Native send path | Real-site evidence |
+| Surface | Standalone entry / payment / status / cancel | Native OTP / list / unlock bridge | Capability delivery | Real-site evidence |
 |---|---|---|---|---|
-| Photon DM | Synthetic native encrypted-vault tests | Synthetic HTTP + registered native tools | Native target resolution and synthetic native adapter on gateway loop | Operator verified add-login, native OTP callback delivery, and an authenticated browser page with 0.2.1; not a separate live revalidation of Photon on 0.3.0 |
-| Discord DM | Synthetic native-vault and owner-isolation tests | Same callback suite as Photon | Real native send function, numeric channel resolution, egress guard and Discord standalone REST sender; HTTP session replaced by a synthetic transport in tests | **Operator-reported live verification succeeded** with 0.3.0 and patched Hermes core, including the additional numbered-widget fix in #139405; not stock-core or all-site verification |
-| Telegram DM | Synthetic native-vault and owner-isolation tests | Same callback suite as Photon | Real native send function, numeric chat resolution, egress guard and Telegram one-shot sender; Bot network boundary replaced by a synthetic transport | **Not live verified**; user must initiate an authorized DM after activation |
-| Slack, Signal, WhatsApp, Matrix, other messaging | Rejected | Rejected | Not enabled by this release | Not verified |
-| Groups, channels, threads, forums, unknown, cron, API/headless, delegated children | Rejected | Rejected | No prompt delivery | Not supported |
+| Photon DM | Supported; native-store/owner tests | Synthetic native callback/lifecycle tests | Native DM target and gateway-loop adapter | Historical operator verification of add-login, OTP and authenticated page on 0.2.1; not revalidation of this candidate |
+| Discord DM | Supported; native-store/owner tests | Synthetic native callback/lifecycle tests | Native numeric channel resolution, egress guard and REST sender; synthetic network in tests | Historical operator-reported verification on 0.3.0 with patched core; not stock-core/all-site coverage |
+| Telegram DM | Supported; native-store/owner tests | Synthetic native callback/lifecycle tests | Native numeric chat resolution, egress guard and one-shot sender; synthetic network in tests | Separate DM-originated live login is not established by the topic result |
+| Authorized Telegram group topic with identified human sender | Refused by plugin tools | Native `enter_code` without a handle, `list`, `unlock` only | Private DM to the authenticated sender; non-mirroring single attempt | Operator reported topic → private web link → native fill → confirmed login; not comprehensive or exact-candidate validation |
+| Other group/channel/thread contexts, bot/anonymous/channel senders, unknown transports, cron/API/headless/delegated contexts | Refused | No bridge admission | No bridge prompt delivery | Not supported by this bridge |
 
-No real manager unlock, comprehensive physical Safari/VoiceOver evaluation, or live Telegram login is claimed. `filled` remains a native fill result, not authentication. Live Photon evidence belongs to the previous installed revision. Discord's live result is operator-reported, separate from synthetic test results and from proof that an arbitrary reader's installation is active.
+This table describes **plugin admission**, not a replacement for the native policy
+of other browser-vault actions. `list` returns native metadata to the originating
+conversation; topic participants may see it. Native group-chat grants can authorize
+identified human group members without a separate plugin per-user allowlist or
+independent DM authorization check. The web form is authorized by **bearer-link
+possession plus tailnet access**, not proof of phone/Telegram identity. Forwarding
+is possible. See the [complete topic contract](telegram-topics.md).
+
+`filled` is a native fill result, not website authentication. No live manager-unlock
+or comprehensive physical Safari/VoiceOver validation is claimed. Historical live
+results and the operator's topic result are separate from synthetic regression
+coverage and do not prove that any reader's installation is active.
 
 ## Stock versus patched Hermes core
 
-Stock **Hermes 0.22.1** supports this bridge on code forms that its native detector selects and recognizes. Add-login does not depend on the following OTP fixes. Both linked core PRs are **open/pending**, not bundled by this plugin and not universal prerequisites:
+The bridge transports native prompts; it does not replace browser selection or OTP
+field recognition. Stock Hermes 0.22.1 can support forms its native detector selects
+and recognizes; add-login is independent of the following site/widget-specific fixes:
 
-- [#136831: visible OTP fields on bound login origins](https://github.com/NousResearch/hermes-agent/pull/136831) fixes wrong-tab selection caused by unrelated hidden postal/country-code controls and uses a saved handle's allowed origins when core receives one. The plugin continues to refuse nonempty OTP handles; this fix does not remove that preview restriction or the remaining immutable-target limitations.
-- [#139405: digit-count labels and numbered OTP widgets](https://github.com/NousResearch/hermes-agent/pull/139405) adds explicit “enter [the/a] [4–8] digit code” label recognition and complete ordered, adjacent 1..N positional groups of 4–8 digits sharing actual form/container identity. It refuses malformed/incomplete/mixed groups and unrelated fields. The updated PR records **127 focused tests passing on Windows** and a live United challenge completed through native private entry and Continue to the authenticated account menu. These are core-fix results, not the plugin suite's test count.
+- [#136831: visible OTP fields on bound login origins](https://github.com/NousResearch/hermes-agent/pull/136831)
+  addresses wrong-tab selection from unrelated hidden code-like controls and uses
+  saved-handle origins when core receives a handle. This plugin still refuses
+  nonempty OTP handles and does not gain immutable target binding from that work.
+- [#139405: digit-count labels and numbered OTP widgets](https://github.com/NousResearch/hermes-agent/pull/139405)
+  addresses explicit digit-count labels and complete ordered adjacent numbered
+  groups. Historical patched-core test/live evidence is not this plugin's suite or
+  a claim of universal native recognition.
 
-The operator reports that live Discord verification worked after the additional fix in #139405. This supports a live Discord result with patched core, not a promise that all sites work on stock 0.22.1 or that every deployment needs both PRs. Telegram remains synthetic-tested only. Native inspection must recognize the actual page before any OTP collector is armed; the bridge does not replace that inspection.
+The historical Discord result used patched core, including the numbered-widget fix.
+Neither linked change is bundled here or asserted to be a universal prerequisite;
+this document does not assert their current merge/release status. The reported
+Telegram topic login does not identify an exact core revision, so it cannot extend
+stock-core compatibility claims. Native inspection must find the actual field
+before a code collector is armed.
 
-Installation uses the supported [direct GitHub CLI procedure](../README.md#direct-github-install-supported-hermes-cli). It still requires `plugins.isolation: in_process`, separately configured Tailscale Serve forwarding a dedicated HTTPS root unchanged to loopback, an authorized tailnet client, and coordinated gateway/new-conversation activation. GitHub install/enable alone supplies none of the site-specific core fixes and does not create the Tailscale route.
+## Inspected native routing contract
 
-## Inspected native source contract
+Current PR-preparation tests use Hermes source
+`046094df28b712f62a5e3c728a9e59da05dcbf1e`, the existing Windows workflow pin. The
+manifest's `>=0.22.1,<0.22.6` range remains unchanged; topic coverage at one pin does
+not validate every version in that range or promise future private-API compatibility.
 
-Hermes 0.22.1 (`046094df28b712f62a5e3c728a9e59da05dcbf1e`) is the bounded host contract; the operator's restored working tree is also tested.
+- Native Telegram sources distinguish `dm` from `group`, carry the real sender,
+  topic and initiating-message IDs, and reject unsuitable actors in topic admission.
+  Usernames are display metadata, not delivery authority. Discord channel ID is
+  distinct from sender/user ID.
+- Gateway ContextVars bind identity; the topic bridge also checks the current
+  cached source, session-key derivation and profile-aware native authorization.
+  It retains the original middleware/native browser task, not a rewritten DM task.
+- Existing DM delivery targets `bound_PLATFORM + ':' + bound_CHAT_ID`. It uses
+  registered native send dispatch when available, otherwise the native CLI send
+  implementation selected before delivery. It never retries through an alternate
+  route on error. **Native DM send can mirror the capability URL into session
+  history.** This behavior is unchanged.
+- Topic delivery targets only the authenticated numeric **user ID**. It uses the
+  native active-profile config resolver, relay-egress guard and single credential
+  snapshot, then the native Telegram helper with `attempts=1`. No model-tool
+  dispatch, mirror, group fallback or retry is used for topic capabilities.
+- Native bot credentials must already be configured for the profile. Synthetic
+  relay-fronted refusal tests do not establish successful connector-only relay
+  delivery. Egress authorization is not bypassed.
 
-- `plugins/platforms/telegram/adapter.py::_source_from_message_for_auth` obtains CHAT_ID from the native message chat and USER_ID from `from_user`; private chat type is normalized to `dm`. Group/forum/channel types remain distinct. Usernames are display metadata, not delivery authority.
-- Discord's native adapter builds sources from native channel and author IDs; DM channels are distinct from guild channels/threads. Discord **channel ID is not sender/user ID**. The relay interaction source also uses `channel_id` and actor `user.id`, but relay deployment success is not claimed here.
-- `gateway/run.py::_set_session_env` passes native SessionSource fields and session identifiers into `gateway.session_context.set_session_vars`. No plugin pre-auth hook establishes authority. ContextVar bindings are required even when native getters could fall back to process environment.
-- The bridge dispatches exactly `bound_PLATFORM + ':' + bound_CHAT_ID`. It does not select a username, USER_ID, model destination, home channel, or another platform. Status/cancel require the full original owner; callback handoff rechecks ownership and scope lifetime.
-- `tools/send_message_tool.py` has no model-registered send tool in this host. The plugin selects the native send implementation used by the CLI; if a supported snapshot has a registered entry, it uses dispatch instead. No ambiguous failure is retried via an alternate route.
-- Native send parses/resolves the target, resolves profile platform configuration, and executes native relay-egress authorization **before** transport. Tests do not patch target resolution or authorization. Discord's sender uses standalone REST even with a live adapter; Telegram uses its one-shot Bot API sender. Photon uses live-adapter gateway-loop scheduling. Therefore a test of Photon loop scheduling alone is not evidence of Discord/Telegram delivery.
-- Native bot credentials must already be configured in the originating profile. Connector-only relay delivery is not established by these tests. Synthetic Discord/Telegram relay-fronted cases demonstrate **refusal** of an unattested target and request revocation, not successful relay delivery. Native egress controls are not bypassed or weakened.
+Slack, Signal, WhatsApp, Matrix and other transports are not added merely because
+native send adapters exist; their identity, routing and callback contracts are
+not established by this contribution.
 
-Slack, Signal, WhatsApp and Matrix have native send/adapter implementations, but that does not prove their DM classification, profile routing, thread semantics, identity and callback delivery. They remain absent from the allowlist until individually exercised.
+## Test evidence and activation
 
-## Test method and activation
+The isolated PM-built Python 3.14.6/macOS comparison recorded **109 focused
+candidate tests passing** (94 in the upstream selection), and **15 topic tests
+passing in each of three fresh processes**, all without skips. Full discovery is
+**not green**: upstream 282 tests and candidate 297 tests each have 20 failures and
+23 errors, with matching failure/error heading multisets in inherited Windows
+ACL/private-file/payment paths. Exact-candidate Windows CI remains a publication
+gate. See [topic compatibility and evidence](telegram-topics.md#compatibility-and-evidence)
+for the private-API and coverage limits; no general audit or production fix is claimed.
 
-The complete **120-test** suite passes against pristine upstream 0.22.1 and the operator's restored working 0.22.1 tree. Discord and Telegram native-send tracer tests each failed admission before their platform was enabled and passed after the minimal owner/routing changes. Separate red regressions caught process-environment-only add-login admission and cross-profile status access before those shared-owner checks were tightened. Native callback lifecycle and isolation tests are inherited for all three supported DMs. Plugin Doctor and catalog validation pass on the clean staged payload. Catalog still warns about version-specific/private core imports; its static `host_ready` result does not permit host-isolated callback use.
+Tests use disposable native vaults, real middleware and pinned gateway/native
+methods, loopback HTTP and synthetic config/transport/supervisor boundaries. No
+external bot messages are sent. Collected-log checks cover WARNING and higher,
+not every verbosity. Concurrent reset coverage includes survival of an unrelated
+admitted callback, not targeted pre-issuance cancellation. Optional SDKs belong
+only in the isolated test environment; no new plugin dependencies are introduced.
 
-Tests use disposable native encrypted vaults, native ContextVars, a synthetic BasePlatformAdapter, registered native browser-vault execution, real loopback form submission, and mocked **network boundaries only** for Discord/Telegram send integration. They cover callback restoration, redaction, task-local/profile/owner/session isolation, wrong-platform status/cancel and callback handoff, model-destination noninterference, cancellation/expiry/reset/unload races, native send failure and relay-egress refusal. No external bot message is sent by the tests.
+Use the [supported installation procedure](../README.md#direct-github-install-supported-hermes-cli)
+and a reviewed immutable revision. Set in-process isolation, configure the separate
+tailnet-only HTTPS root, and coordinate gateway stop, update/install, doctor and
+validation, then a new gateway process and conversation. Never overwrite an active
+middleware copy. Install/enable alone does not configure Tailscale or prove live
+activation. Before sensitive use, validate authorized synthetic delivery, blocked
+DM behavior, cancellation, topic isolation and an existing DM flow. Live checks
+require separate user authorization; never send unsolicited tests or share links.
 
-Optional `aiohttp`, `python-telegram-bot` and `discord.py` SDKs are installed **only in the isolated test environment** for native transport coverage, not declared as new plugin dependencies or installed into the live host.
-
-Stage an immutable payload and coordinate a gateway stop, supported plugin update/install, doctor/validation, then restart. Never overwrite an active installed middleware copy. This documentation update performs no config change, restart, or live installed-plugin synchronization. After activation, the user should initiate a DM on each platform; test real link delivery, cancellation, form submission and browser/account outcome before labeling that deployment live verified. The operator-reported Discord result above does not establish every cancellation/unlock/device scenario. Do not test by unsolicited messages or by posting links publicly.
+Intermittent `admission_unavailable` and observed browser resets remain unresolved,
+not diagnoses or claimed fixes. Inspect native state and sanitized diagnostics;
+do not bypass authorization or equate a successful fill with authenticated login.

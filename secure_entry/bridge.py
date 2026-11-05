@@ -9,10 +9,19 @@ class Bridge:
     def __init__(self, service, dispatch, isolation):
         self.service, self.dispatch, self.isolation = service, dispatch, isolation
         self.timeout = 180
+        self.topic_scopes = {}  # active callback -> owner; removed on every exit
+
+    def stop_topics(self, session_key='', session_id=''):
+        # Caller holds service.lock. Do not invalidate another topic's wait.
+        for active, bound in self.topic_scopes.items():
+            if ((session_key and bound.session_key == session_key)
+                    or (session_id and bound.session_id == session_id)):
+                active.clear()
 
     def bound_owner(self, context):
         # Shared owner admission also fences metadata tools and add-login.
-        bound = owner(self.service.home)
+        bound = owner(self.service.home, allow_telegram_topic=True,
+                      task_id=context.get('task_id', ''))
         if not context.get('session_id') or context['session_id'] != bound[-1]:
             raise ValueError('session correlation mismatch')
         if self.isolation != 'in_process':
@@ -56,6 +65,11 @@ class Bridge:
         def unlock_prompt(backend, display):
             return self.prompt('unlock', display or backend, bound, generation, requests, active, deadline, diagnostics)
         try:
+            with self.service.lock:
+                if self.service.closed or generation != self.service.generation:
+                    return json.dumps({'success': False, 'status': 'unavailable', 'error_type': 'admission_unavailable'})
+                if bound.chat_type == 'group':
+                    self.topic_scopes[active] = bound
             unlock.set_code_prompt_callback(prompt)
             unlock.set_unlock_prompt_callback(unlock_prompt)
             result = None
@@ -92,6 +106,7 @@ class Bridge:
         finally:
             with self.service.lock:
                 active.clear()
+                self.topic_scopes.pop(active, None)
             unlock.set_code_prompt_callback(old_code)
             unlock.set_unlock_prompt_callback(old_unlock)
             for request in requests:
@@ -112,8 +127,9 @@ class Bridge:
         try:
             with service.lock:
                 if (is_interrupted() or not active.is_set() or broker.clock() >= deadline or service.closed
-                        or generation != service.generation
-                        or self.bound_owner({'session_id': bound[-1]}) != bound):
+                        or (bound.chat_type != 'group' and generation != service.generation)
+                        or self.bound_owner({'session_id': bound.session_id,
+                                             'task_id': bound.task_id}) != bound):
                     return None
                 if service.server is None:
                     try:
@@ -128,19 +144,31 @@ class Bridge:
                 import secrets
                 service.ids = {rid: item for rid, item in service.ids.items() if item[0] in broker.requests}
                 service.ids[secrets.token_hex(16)] = (request.token, bound)
-            sent = self.dispatch('send_message', {'action': 'send', 'target': bound[1] + ':' + bound[3],
-                'message': 'Private native ' + kind + ' entry (expires in 180 seconds): ' + broker.url(request)})
+            message = 'Private native ' + kind + ' entry (expires in 180 seconds): ' + broker.url(request)
+            if bound.chat_type == 'group':
+                from .telegram_topic import deliver_private
+                sent = deliver_private(bound, message)
+            else:
+                sent = self.dispatch('send_message', {'action': 'send',
+                    'target': bound.platform + ':' + bound.chat_id, 'message': message})
             sent = json.loads(sent) if isinstance(sent, str) else sent
             if not isinstance(sent, dict) or sent.get('success') is not True:
                 broker.finish(request.token, 'cancelled')
                 return None
             while True:
                 with service.lock, broker.lock:
-                    if is_interrupted() or not active.is_set() or service.closed or generation != service.generation:
+                    if is_interrupted() or not active.is_set() or service.closed or (bound.chat_type != 'group' and generation != service.generation):
                         if request.status in ('pending', 'received'):
                             broker.finish(request.token, 'cancelled')
                     state = broker.status(request.token)['status']
                     if state == 'received':
+                        # Re-authenticate the exact topic/source after the web wait.
+                        # New topic traffic/profile/auth changes fail closed; never
+                        # hand input to a replacement task or different requester.
+                        if bound.chat_type == 'group' and self.bound_owner({
+                                'session_id': bound.session_id, 'task_id': bound.task_id}) != bound:
+                            broker.finish(request.token, 'cancelled')
+                            return None
                         # Cancellation after handoff cannot promise no native write.
                         broker.finish(request.token, 'commit_unknown')
                         return box.pop() if box else None

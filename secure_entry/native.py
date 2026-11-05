@@ -21,7 +21,26 @@ def validate_origin(origin):
     return origin
 
 
-def owner(expected_home):
+# Keep the lifecycle key/session slots last; payment timing uses owner[-2].
+# Named fields prevent routing a topic capability using a shifted tuple index.
+from typing import NamedTuple
+
+
+class Owner(NamedTuple):
+    home: str
+    platform: str
+    chat_type: str
+    chat_id: str
+    user_id: str
+    profile: str
+    thread_id: str
+    message_id: str
+    task_id: str
+    session_key: str
+    session_id: str
+
+
+def owner(expected_home, *, allow_telegram_topic=False, task_id=''):
     from hermes_constants import get_hermes_home
     from gateway.session_context import get_session_env
     from tools.approval_context import (_is_cron_approval_context, _is_single_query_approval_context,
@@ -33,9 +52,10 @@ def owner(expected_home):
     home = str(Path(get_hermes_home()).resolve())
     values = tuple(get_session_env('HERMES_SESSION_' + key, '') for key in
                    ('PLATFORM', 'CHAT_TYPE', 'CHAT_ID', 'USER_ID', 'KEY', 'ID'))
+    topic = allow_telegram_topic and values[:2] == ('telegram', 'group')
     if (home != str(Path(expected_home).resolve()) or values[0] not in ('photon', 'discord', 'telegram')
-            or values[1] != 'dm'):
-        raise ValueError('Secure entry requires a bound supported DM and matching profile')
+            or (values[1] != 'dm' and not topic)):
+        raise ValueError('Secure entry requires a bound supported conversation and matching profile')
     if not values[-1]:
         raise MissingSessionID('Missing session ID binding')
     if not all(values[2:]):
@@ -48,9 +68,19 @@ def owner(expected_home):
         if local.get('HERMES_SESSION_' + key) != value:
             raise MissingSessionBinding('Missing task-local identity')
     from hermes_constants import profile_name_for_home
-    if local.get('HERMES_SESSION_PROFILE', '') not in ('', profile_name_for_home(expected_home)):
+    profile = local.get('HERMES_SESSION_PROFILE', '')
+    if profile not in ('', profile_name_for_home(expected_home)):
         raise ValueError('Profile mismatch')
-    return (home, *values)
+    thread = get_session_env('HERMES_SESSION_THREAD_ID', '')
+    if thread and local.get('HERMES_SESSION_THREAD_ID') != thread:
+        raise MissingSessionBinding('Missing task-local thread')
+    bound = Owner(home, *values[:4], profile, thread,
+                  local.get('HERMES_SESSION_MESSAGE_ID', '') if topic else '',
+                  task_id if topic else '', *values[-2:])
+    if topic:
+        from .telegram_topic import validate_topic
+        validate_topic(bound)
+    return bound
 
 
 def dispatch_message(ctx, name, args):

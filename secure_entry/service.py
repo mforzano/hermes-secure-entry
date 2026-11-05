@@ -179,6 +179,8 @@ class Service:
             # Conservatively refuse all in-flight admissions on a lifecycle event;
             # indexed requests remain scoped to the specified owner. No tombstone leak.
             self.generation += 1
+            if getattr(self, 'bridge', None):
+                self.bridge.stop_topics(session_key=session_key, session_id=session_id)
             owners = {bound for _, bound in self.ids.values()
                       if (session_key and bound[-2] == session_key) or (session_id and bound[-1] == session_id)}
             for bound in owners:
