@@ -13,6 +13,24 @@ def register(ctx):
     service.payment = LocalPayment(service, ctx.get_config('link_cli_command', default=[]))
     ctx.register_middleware('tool_execution', service.middleware)
     definitions = [
+        ('secure_entry_signup_fill', service.signup_fill,
+         'Explicitly consented REGISTRATION password fill from an existing saved native login handle. '
+         'Inspect the exact selected page/frame and choose actual writable password backend node IDs, including confirmation if present. '
+         'Generic: one or multiple password fields, formless controls, separate forms/steps, top-level or direct same/cross-origin iframe. '
+         'Unselected fields, consent checkboxes and unrelated forms are untouched; selected prefills may be replaced. '
+         'Fresh genuine native consent names registration origin, account, saved handle, password document and retained nodes before private retrieval. '
+         'Writes the identical saved password and privately verifies equality/validity. Never types identifiers, submits, creates an account or deletes a login. '
+         'write_unknown may mean partial disclosure: reinspect value-free state and do not blindly retry. '
+         'Separate from ordinary browser_vault login filling; does not weaken its new/confirm-password safeguards. Never pass secrets, selectors or scripts.',
+         {'handle':{'type':'string','description':'Exact existing native login metadata handle.'},
+          'origin':{'type':'string','description':'Exact approved HTTPS registration origin, equal to the saved login origin.'},
+          'identifier':{'type':'string','description':'Approved public account identifier, exactly equal to saved login metadata. This tool does not type it.'},
+          'parent':{'type':'string','description':'Exact inspected task-selected page target ID on the currently captured browser.'},
+          'frame':{'type':'string','description':'Exact inspected root frame ID for top-level controls, or direct iframe ID. Never a DOM node ID or guessed selector.'},
+          'frame_origin':{'type':'string','description':'Exact HTTPS origin of the selected password document. A distinct iframe/offsite document is separately named in consent.'},
+          'password_nodes':{'type':'array','minItems':1,'uniqueItems':True,'items':{'type':'integer','minimum':1},
+                            'description':'Inspected CDP backendNodeId integers for ONLY intended actual INPUT type=password elements in this selected frame. One or more, confirmation if present. Not frontend nodeId, selectors, names or values.'}},
+         ['handle','origin','identifier','parent','frame','frame_origin','password_nodes']),
         ('secure_entry_card_list', service.list_cards,
          'Discover native payment handles and scope only in an authenticated human DM. No secret retrieval. '
          'Lists explicitly reusable cards and exact HTTPS merchant-bound cards; excludes legacy originless entries. '

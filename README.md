@@ -14,6 +14,16 @@ Discord verification have operator-reported live evidence; Telegram has syntheti
 integration evidence only. Real manager unlock and comprehensive physical
 Safari/VoiceOver testing remain unverified. See the [platform matrix](docs/platforms.md).
 
+## Registration passwords (0.5.17)
+
+`secure_entry_signup_fill` fills an existing saved login's password into explicitly
+selected actual password elements, with fresh native consent naming registration
+destination, account, handle and exact retained nodes. It supports one password,
+confirmation when present, formless/multiple-form layouts and top-level or direct
+same/cross-origin iframe documents. Unselected fields are untouched. It never
+submits or creates an account and does **not** weaken ordinary login recognition.
+See [usage, security, evidence and activation](docs/signup-password-fill.md).
+
 ## Reusable cards (0.5.16)
 
 Use `secure_entry_request(operation="add_reusable_card")` **without an origin**

@@ -1,9 +1,10 @@
 name: secure-entry
-version: 0.5.16
-description: Private DM login/card entry and native OTP/unlock bridge, plus retained-browser Link or merchant-bound or explicitly reusable real-card fill and explicit verified card cleanup. In-process only; mapped saved-card route synthetic-tested and verified in one live checkout.
+version: 0.5.17
+description: Private DM login/card entry and native OTP/unlock bridge, explicitly consented retained-node registration-password fill, plus retained-browser Link or merchant-bound or explicitly reusable real-card fill and explicit verified card cleanup. In-process only; signup synthetic-tested, mapped saved-card route synthetic-tested and verified in one live checkout.
 license: MIT
 requires_hermes: ">=0.22.1,<0.22.6"
 provides_tools:
+  - secure_entry_signup_fill
   - secure_entry_card_list
   - secure_entry_card_fill
   - secure_entry_card_remove

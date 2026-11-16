@@ -37,6 +37,10 @@ class Service:
             return json.dumps({'success':False,'status':'refused','refusal':'field_mapping_required'})
         return self.card_fill(args, **kwargs)
 
+    def signup_fill(self, args, **kwargs):
+        from .signup import SignupFill
+        return SignupFill(self).fill(args, **kwargs)
+
     def payment_fill(self, args, **kwargs):
         return self.payment.fill(args, **kwargs)
 
