@@ -14,6 +14,29 @@ Discord verification have operator-reported live evidence; Telegram has syntheti
 integration evidence only. Real manager unlock and comprehensive physical
 Safari/VoiceOver testing remain unverified. See the [platform matrix](docs/platforms.md).
 
+## Reusable cards (0.5.16)
+
+Use `secure_entry_request(operation="add_reusable_card")` **without an origin**
+only when the user explicitly chooses cross-website storage. The private form
+requires an unchecked opt-in checkbox. It saves **one originless native encrypted
+payment record**, including CVC, until explicit deletion. Each fill still needs
+fresh native consent for the exact user-approved HTTPS merchant/payment document
+and agent-selected retained field mapping; there is no blanket browser approval.
+
+`secure_entry_card_list()` discovers handles and `reusable` / `merchant_bound`
+scope using metadata only. `secure_entry_card_fill` accepts either scope. Reusable
+cards are **not** automatically deleted after checkout; use
+`secure_entry_card_remove(handle=...)` only when deletion is explicitly requested.
+Merchant-bound `add_card` remains unchanged and still requires its exact origin
+for fill and cleanup. Link remains a separate supported route.
+
+The reserved native metadata label `Hermes reusable payment v1` together with
+`origin=None` records the explicit opt-in. Legacy originless cards are not
+silently promoted or accepted. This marker is a plugin convention, not a core
+cryptographic permission: another trusted vault editor can change metadata.
+See [reusable-card contract and evidence](docs/reusable-cards.md). Publication
+alone does not install or activate this version.
+
 ## Additional payment filler: agent selects, native code fills
 
 The plugin also ships a **custom payment filler**, distinct from Hermes's built-in

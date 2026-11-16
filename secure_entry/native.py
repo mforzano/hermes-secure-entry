@@ -89,11 +89,21 @@ def add_login(store, origin, fields):
     return result
 
 
-def add_card(store, origin, fields):
+REUSABLE_CARD_LABEL = "Hermes reusable payment v1"
+
+
+def is_reusable_card(meta):
+    """Only explicitly marked originless records are reusable; legacy is not opt-in."""
+    return bool(meta and meta.kind == "payment" and meta.origin is None
+                and meta.label == REUSABLE_CARD_LABEL)
+
+
+def add_card(store, origin, fields, *, reusable=False):
     """Public native payment API only; its established schema persists CVC."""
     import re
     from .redaction import register_payment_redaction_values
-    validate_origin(origin)
+    if not reusable:
+        validate_origin(origin)
     if (not re.fullmatch(r'[0-9]{12,19}', fields['card_number'])
             or not re.fullmatch(r'[0-9]{3,4}', fields['cvc'])
             or not re.fullmatch(r'(0?[1-9]|1[0-2])', fields['exp_month'])
@@ -106,10 +116,12 @@ def add_card(store, origin, fields):
     })
     result = {'status': 'commit_unknown'}
     try:
-        meta = store.add_item('payment', urlsplit(origin).netloc, fields, origin=origin)
+        meta = store.add_item('payment', REUSABLE_CARD_LABEL if reusable else urlsplit(origin).netloc,
+                              fields, origin=None if reusable else origin)
         result['handle'] = meta.id
         saved = store.get_meta(meta.id)
-        if saved and saved.kind == 'payment' and saved.origin == origin:
+        if (is_reusable_card(saved) if reusable else
+                saved and saved.kind == 'payment' and saved.origin == origin):
             result['status'] = 'saved'
     except Exception:
         pass

@@ -19,7 +19,8 @@ class VaultCardSource:
 
     def _metadata(self, handle, merchant):
         meta = self.store.get_meta(handle)
-        if meta is None or meta.kind != 'payment' or meta.origin != merchant:
+        from .native import is_reusable_card
+        if meta is None or meta.kind != 'payment' or (not is_reusable_card(meta) and meta.origin != merchant):
             raise ValueError('card_origin_mismatch')
 
     def load(self, handle, merchant):

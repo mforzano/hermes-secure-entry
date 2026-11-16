@@ -18,7 +18,7 @@ from .payment_file import PrivateCard, PrivateFileRefused
 from .payment_browser import BindingRefused, Target, WriteRefused
 
 
-PAYMENT_DIAGNOSTIC_VERSION = "0.5.14"
+PAYMENT_DIAGNOSTIC_VERSION = "0.5.16"
 
 
 class RetrievalRefused(ValueError):
@@ -223,8 +223,8 @@ class LocalPayment:
                     ) + '. Prefilled selected fields may be overwritten. '
                     if 'field_mapping' in args else ''
                     ) + (
-                    "Enter the site-bound saved card into this exact authorized merchant/payment-frame pair. "
-                    "This does not submit, reserve or purchase. Card remains saved; explicitly delete after verifying checkout outcome." if self.card_source else
+                    "Enter the saved card into this exact authorized merchant/payment-frame pair. "
+                    "This does not submit, reserve or purchase. Card remains saved until explicit deletion; reusable cards are not automatically cleaned up after checkout." if self.card_source else
                     "Enter the approved one-time Link card into this exact checkout document. "
                     "This does not submit or purchase. No card is saved in the vault."),
                     surface="vault-payment",

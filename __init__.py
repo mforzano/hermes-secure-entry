@@ -13,6 +13,11 @@ def register(ctx):
     service.payment = LocalPayment(service, ctx.get_config('link_cli_command', default=[]))
     ctx.register_middleware('tool_execution', service.middleware)
     definitions = [
+        ('secure_entry_card_list', service.list_cards,
+         'Discover native payment handles and scope only in an authenticated human DM. No secret retrieval. '
+         'Lists explicitly reusable cards and exact HTTPS merchant-bound cards; excludes legacy originless entries. '
+         'Reusable cards remain saved until explicit deletion; each mapped fill requires fresh exact-destination native consent.',
+         {}, []),
         ('secure_entry_card_fill', service.selected_card_fill,
          'Fill a privately saved real card by native vault metadata handle. In addition to Link, not a replacement. '
          'First determine the official checkout merchant origin, request operation=add_card bound to that origin, '
@@ -22,17 +27,17 @@ def register(ctx):
          {'handle':{'type':'string','description':'Saved native payment handle, also used for cleanup.'},
           'parent':{'type':'string','description':'Exact task-selected merchant page target ID.'},
           'frame':{'type':'string','description':'Exact inspected payment frame ID: direct iframe, or this selected page root frame for a top-level form. Never omit or guess.'},
-          'merchant_origin':{'type':'string','description':'Exact HTTPS merchant origin matching the saved card binding.'},
+          'merchant_origin':{'type':'string','description':'Exact user-approved HTTPS merchant origin. Must match a bound card; reusable cards require fresh native consent for this exact destination.'},
           'frame_origin':{'type':'string','description':'Exact inspected HTTPS payment document origin, including an offsite top-level processor explicitly authorized in native consent.'}},
          ['handle','parent','frame','merchant_origin','frame_origin']),
         ('secure_entry_card_remove', service.remove_card,
          'Explicitly remove a saved native payment card by metadata handle and merchant origin in an authenticated human DM. '
-         'Use after verifying fill/checkout outcome or explicit user cancellation; no automatic pre-checkout deletion. '
+         'Reusable cards: delete only when explicitly requested, not automatically after checkout. Bound cards: preserve the temporary cleanup workflow. '
          'Reports deleted/absent only after native metadata readback verifies absence. deletion_unknown requires inspection. '
          'Does not revoke browser copies, merchant retention, backups or an already-started fill.',
          {'handle':{'type':'string','description':'Exact native payment cleanup handle.'},
-          'merchant_origin':{'type':'string','description':'Exact saved HTTPS merchant origin.'}},
-         ['handle','merchant_origin']),
+          'merchant_origin':{'type':'string','description':'Required exact saved HTTPS merchant origin for bound cards; omit for reusable cards.'}},
+         ['handle']),
         ('secure_entry_payment_fill', service.selected_payment_fill,
          'Native local Link CLI private-card handoff into the existing task-captured browser. Requires an already user-approved Link spend request; '
          'asks separate native explicit payment consent. Binds the task-selected parent and explicit payment '
@@ -47,15 +52,15 @@ def register(ctx):
          ['parent','frame','merchant_origin','frame_origin','spend_request_id']),
         ('secure_entry_request', service.request,
          'Request a private one-use form to ADD a website login or real payment card to the native encrypted Hermes vault without a browser. '
-         'For add_card first determine the official merchant checkout origin (not the cross-origin payment iframe); bind it exactly. '
+         'For reusable storage use add_reusable_card without origin; the private page requires explicit opt-in to retain one cross-website card until explicit deletion. For add_card first determine the official merchant checkout origin (not the cross-origin payment iframe); bind it exactly. '
          'The native payment contract encrypts and persists CVC too; the private form discloses this. Retain saved handle for '
-         'secure_entry_card_fill and explicit secure_entry_card_remove after verifying checkout outcome. Link remains available separately. '
+         'secure_entry_card_fill. Reusable cards remain until explicitly requested deletion, not automatic checkout cleanup. Bound cards retain explicit cleanup after verifying checkout outcome. Link remains available separately. '
          'Photon, Discord, or Telegram DM only (Discord/Telegram synthetic-tested; live verification pending). Does not sign in. For verification codes call browser_vault action=enter_code WITHOUT a handle; '
          'its native inspection arms a private form and sends its link to this DM. Update, transient sign-in and save-and-sign-in '
          'remain unsupported. Never pass credentials or codes in tool arguments.',
-         {'operation': {'type':'string', 'enum':['add_login','add_card','update_login','sign_in_once','save_and_sign_in','verification_code']},
-          'origin': {'type':'string','description':'Exact HTTPS website origin, without path or trailing slash. Visible to the user before entry.'}},
-         ['operation','origin']),
+         {'operation': {'type':'string', 'enum':['add_login','add_card','add_reusable_card','update_login','sign_in_once','save_and_sign_in','verification_code']},
+          'origin': {'type':'string','description':'Required exact HTTPS website origin for add_login/add_card. Omit for add_reusable_card, which additionally requires explicit opt-in on the private form.'}},
+         ['operation']),
         ('secure_entry_status', service.status, 'Read metadata-only request status in the same originating Photon, Discord, or Telegram DM session.',
          {'request_id':{'type':'string'}}, ['request_id']),
         ('secure_entry_cancel', service.cancel, 'Cancel a pending secure-entry request in the same originating Photon, Discord, or Telegram DM session.',
@@ -80,7 +85,7 @@ def register(ctx):
                 'Unselected billing, contact, consent and other forms are untouched. '
                 'Separate native consent binds the exact retained targets, document and origins before private retrieval. '
                 'Never supplies secrets to the model; never submits, purchases or deletes. write_unknown can mean a partial fill. '
-                + ('Uses the saved merchant-bound vault handle; retain it for explicit cleanup.' if name=='secure_entry_card_fill' else
+                + ('Uses a merchant-bound or explicitly reusable native vault handle. Use secure_entry_card_list for scope. Reusable cards persist until explicit deletion; do not delete after each checkout unless requested. Bound cards keep their exact origin and temporary cleanup workflow.' if name=='secure_entry_card_fill' else
                    'Requires an already approved Link spend request; private native CLI handoff, no vault save.'))
         ctx.register_tool(name=name, toolset='secure_entry', handler=handler,
                           schema={'name':name, 'description':description,

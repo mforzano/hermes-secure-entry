@@ -76,9 +76,12 @@ class Service:
                     'instruction':'Call the native tool without a handle. Only its inspected site can arm a private form. Never type a code in chat. Links are sent directly to this originating DM and may appear in history.'})
             if operation in BLOCKERS:
                 return json.dumps({'status':'unsupported_native_contract', 'operation':operation, 'reason':BLOCKERS[operation]})
-            if operation not in ('add_login', 'add_card'):
+            if operation not in ('add_login', 'add_card', 'add_reusable_card'):
                 return json.dumps({'status':'invalid_operation'})
-            origin = validate_origin(args.get('origin', ''))
+            reusable = operation == 'add_reusable_card'
+            if reusable and args.get('origin') not in (None, ''):
+                raise ValueError('reusable_has_no_origin')
+            origin = 'Reusable across websites' if reusable else validate_origin(args.get('origin', ''))
             from agent.vault_store import get_vault_store
             # Resolve the profile-scoped native object HERE, not on an unrelated HTTP thread.
             store = self.store_factory() if self.store_factory else get_vault_store()
@@ -90,9 +93,10 @@ class Service:
                         self.server = Server(self.broker, port=self.port).__enter__()
                     except OSError:
                         return json.dumps({'status':'unavailable', 'error_type':'listener_binding_failed'})
-                apply = add_card if operation == 'add_card' else add_login
-                request = self.broker.issue('card' if operation == 'add_card' else 'login', origin, bound,
-                                            lambda fields: apply(store, origin, fields))
+                apply = (lambda fields: add_card(store, None, fields, reusable=True)) if reusable else (
+                    lambda fields: (add_card if operation == 'add_card' else add_login)(store, origin, fields))
+                kind = 'reusable_card' if reusable else 'card' if operation == 'add_card' else 'login'
+                request = self.broker.issue(kind, origin, bound, apply)
                 with self.broker.lock:
                     self.ids = {rid: item for rid, item in self.ids.items() if item[0] in self.broker.requests}
                 request_id = secrets.token_hex(16)
@@ -116,6 +120,36 @@ class Service:
         except Exception:
             return json.dumps({'status':'unavailable'})
 
+    def list_cards(self, args, **kwargs):
+        """Authenticated metadata discovery; never resolve card payloads."""
+        try:
+            from .native import is_reusable_card
+            from agent.vault_store import get_vault_store
+            with self.lock:
+                if self.closed:
+                    raise ValueError('closed')
+                generation = self.generation
+            bound = owner(self.home)
+            store = self.store_factory() if self.store_factory else get_vault_store()
+            cards = []
+            for meta in store.list_items():
+                reusable = is_reusable_card(meta)
+                if not reusable:
+                    if meta.kind != 'payment' or not meta.origin:
+                        continue
+                    try:
+                        validate_origin(meta.origin)
+                    except Exception:
+                        continue
+                cards.append({'handle':meta.id, 'scope':'reusable' if reusable else 'merchant_bound',
+                              'origin':meta.origin})
+            with self.lock:
+                if self.closed or generation != self.generation or owner(self.home) != bound:
+                    raise ValueError('cancelled')
+                return json.dumps({'status':'available', 'cards':cards})
+        except Exception:
+            return json.dumps({'status':'unavailable'})
+
     def remove_card(self, args, **kwargs):
         """Explicit cleanup only; read back absence before claiming deletion."""
         started = False
@@ -126,7 +160,10 @@ class Service:
                     raise ValueError('closed')
                 generation = self.generation
             bound = owner(self.home)
-            origin = validate_origin(args.get('merchant_origin', ''))
+            from .native import is_reusable_card
+            origin = args.get('merchant_origin')
+            if origin is not None:
+                origin = validate_origin(origin)
             import re
             if not isinstance(handle, str) or not re.fullmatch(r'vault_[0-9a-f]{12}', handle):
                 raise ValueError('invalid_handle')
@@ -138,7 +175,7 @@ class Service:
                 meta = store.get_meta(handle)
                 if meta is None:
                     return json.dumps({'status':'absent', 'handle':handle})
-                if meta.kind != 'payment' or meta.origin != origin:
+                if not is_reusable_card(meta) and (meta.kind != 'payment' or not origin or meta.origin != origin):
                     return json.dumps({'status':'refused'})
                 started = True
                 store.remove_item(handle)

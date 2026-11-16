@@ -34,7 +34,11 @@ class RegistrationTests(unittest.TestCase):
         ctx = Context()
         plugin.register(ctx)
         self.assertEqual(set(ctx.tools), {'secure_entry_request', 'secure_entry_status', 'secure_entry_cancel',
-            'secure_entry_payment_fill', 'secure_entry_card_fill', 'secure_entry_card_remove'})
+            'secure_entry_payment_fill', 'secure_entry_card_fill', 'secure_entry_card_remove', 'secure_entry_card_list'})
+        request_params = ctx.tools['secure_entry_request']['schema']['parameters']
+        self.assertIn('add_reusable_card', request_params['properties']['operation']['enum'])
+        self.assertNotIn('origin', request_params['required'])
+        self.assertEqual(ctx.tools['secure_entry_card_remove']['schema']['parameters']['required'], ['handle'])
         self.assertIn('add_card', ctx.tools['secure_entry_request']['schema']['parameters']['properties']['operation']['enum'])
         for name in ('secure_entry_payment_fill','secure_entry_card_fill'):
             parameters=ctx.tools[name]['schema']['parameters']

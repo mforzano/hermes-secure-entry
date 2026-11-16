@@ -36,7 +36,7 @@ class Broker:
         self.requests = {}
 
     def issue(self, kind, origin, owner, apply):
-        if kind not in ('login', 'card', 'code', 'unlock') or not origin or not owner:
+        if kind not in ('login', 'card', 'reusable_card', 'code', 'unlock') or not origin or not owner:
             raise ValueError('invalid request metadata')
         with self.lock:
             for token in list(self.requests):
@@ -89,11 +89,13 @@ class Broker:
                 self.finish(token, 'cancelled')
                 return self.status(token)
             required = (('identifier', 'password') if request.kind == 'login' else
-                        tuple(CARD_LIMITS) if request.kind == 'card' else
+                        tuple(CARD_LIMITS) if request.kind in ('card', 'reusable_card') else
                         ('password',) if request.kind == 'unlock' else ('code',))
             limits = {'identifier':320, 'password':4096, 'code':256, **CARD_LIMITS}
             if (fields.get('action') != 'submit'
                     or any(not isinstance(fields.get(k), str) or not fields[k] or len(fields[k]) > limits[k] for k in required)):
+                return {'status': 'invalid_input'}
+            if request.kind == 'reusable_card' and fields.get('reusable_consent') != 'yes':
                 return {'status': 'invalid_input'}
             request.status = 'received'
             apply, request.apply = request.apply, None
@@ -137,10 +139,17 @@ class Broker:
                                 '<input id="identifier" name="identifier" autocomplete="username" required maxlength="320">'
                                 '<label for="password">Website password</label>'
                                 '<input id="password" name="password" type="password" autocomplete="current-password" required maxlength="4096">')
-                elif request.kind == 'card':
-                    content += ('<p>Save a payment card bound only to this merchant in the native encrypted vault. '
+                elif request.kind in ('card', 'reusable_card'):
+                    if request.kind == 'reusable_card':
+                        content += ('<p>Save one reusable card across websites until explicit deletion. '
+                                    'Each fill still requires native consent for the exact merchant/payment document.</p>'
+                                    '<label><input type="checkbox" name="reusable_consent" value="yes" required>'
+                                    'I explicitly opt in to reusable storage until explicit deletion.</label>')
+                    else:
+                        content += '<p>This card is bound only to this merchant. Request explicit deletion after verifying checkout outcome.</p>'
+                    content += ('<p>Save a payment card in the native encrypted vault. '
                                 'CVC is encrypted and saved under the native payment contract. '
-                                'This does not fill, submit, reserve, or pay. Request explicit deletion after verifying the checkout outcome.</p>')
+                                'This does not fill, submit, reserve, or pay.</p>')
                     labels = {'card_number':'Card number', 'cardholder_name':'Cardholder name',
                               'exp_month':'Expiry month (1-12)', 'exp_year':'Expiry year (YYYY)',
                               'cvc':'CVC (saved encrypted)', 'billing_postal_code':'Billing postal code'}
