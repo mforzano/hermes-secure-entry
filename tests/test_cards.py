@@ -195,7 +195,6 @@ class CardTests(unittest.TestCase):
     def test_core_native_fill_cannot_reach_cross_origin_widget(self):
         from test_payment_browser import PaymentBrowserTests
         from tools import approval, browser_vault_tool
-        from types import SimpleNamespace
         from unittest.mock import patch
         handle = self.save_card()
         fixture = PaymentBrowserTests()
@@ -212,12 +211,10 @@ class CardTests(unittest.TestCase):
             approval.resolve_gateway_approval('synthetic-key', 'once', request_id=data['request_id'])
         approval.register_gateway_notify('synthetic-key', notify)
         self.addCleanup(approval.unregister_gateway_notify, 'synthetic-key')
-        # Replace backend discovery only, never native consent, inspection,
+        # Bind the native local backend to this test's store, never mock consent, inspection,
         # supervisor evaluation, tab selection, or classifier/fill planning.
-        backend = SimpleNamespace(needs_unlock=False, get_meta=self.store.get_meta,
-            resolve_secret=self.store.resolve_secret, name='synthetic-native')
-        with patch('agent.vault_backends.backend_for_handle', return_value=backend), \
-             patch.object(backend, 'resolve_secret', side_effect=AssertionError('must not resolve')):
+        with patch('agent.vault_store.get_vault_store', return_value=self.store), \
+             patch.object(self.store, 'resolve_secret', side_effect=AssertionError('must not resolve')):
             result = json.loads(browser_vault_tool.browser_vault_fill(handle, task_id='synthetic-payment'))
         self.assertEqual(len(prompts), 1)
         self.assertFalse(result['success'], result)

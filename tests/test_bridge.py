@@ -359,7 +359,7 @@ class BridgeTests(unittest.TestCase):
     def test_native_send_delivers_synthetic_link_on_gateway_loop_while_worker_waits(self):
         import asyncio
         from types import SimpleNamespace
-        from tools import send_message_tool as sender
+        from gateway.outbound import send as sender
         loop = asyncio.new_event_loop()
         ready = threading.Event()
         def run_loop():
@@ -392,7 +392,6 @@ class BridgeTests(unittest.TestCase):
         # The new relay egress guard imports the live gateway reference. Provide
         # an actual synthetic native adapter there; never import gateway.run's
         # launcher, which may relaunch this test process into the selected env.
-        import sys
         from types import ModuleType
         gateway_run = ModuleType('gateway.run')
         runner.adapters = {platform: adapter}
@@ -407,9 +406,9 @@ class BridgeTests(unittest.TestCase):
         def consumer(args):
             self.assertEqual(unlock.get_code_prompt_callback()('synthetic.example', ''), 'SYNTHETIC-TRANSPORT-CODE')
             return json.dumps({'success':True})
-        from native_transport import synthetic_bot_network
+        from native_transport import synthetic_bot_network, synthetic_gateway_run
         try:
-            with synthetic_bot_network(self.platform, adapter.send), patch.dict(sys.modules, {'gateway.run': gateway_run}), patch('gateway.config.load_gateway_config', return_value=config), patch.object(sender, '_mirror_sent_message', return_value=False):
+            with synthetic_gateway_run(gateway_run), synthetic_bot_network(self.platform, adapter.send), patch('gateway.config.load_gateway_config', return_value=config), patch.object(sender, '_mirror_sent_message', return_value=False):
                 t, results, errors = self.worker(lambda: self.call(consumer))
                 self.assertTrue(self.delivered.wait(8), str(dispatched) + str(results) + str(errors))
                 self.assertTrue(t.is_alive())
@@ -428,7 +427,7 @@ class BridgeTests(unittest.TestCase):
         from unittest.mock import Mock
         from secure_entry.native import dispatch_message
         ctx = SimpleNamespace(dispatch_tool=Mock(return_value=json.dumps({'success':False})))
-        with patch('tools.registry.registry.get_entry', return_value=object()), patch('tools.send_message_tool.send_message_tool') as direct:
+        with patch('tools.registry.registry.get_entry', return_value=object()), patch('gateway.outbound.send.send_message_tool') as direct:
             result = dispatch_message(ctx, 'send_message', {'action':'send', 'target':self.platform + ':' + self.chat_id, 'message':'synthetic only'})
             self.assertFalse(json.loads(result)['success'])
             ctx.dispatch_tool.assert_called_once()
@@ -532,7 +531,6 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(self.service.broker.status(token)['status'], 'unlocked')
 
     def check_relay_egress_decline_revokes_link_without_transport_send(self):
-        import sys
         from types import ModuleType, SimpleNamespace
         from gateway.config import GatewayConfig, Platform, PlatformConfig
         from secure_entry.native import dispatch_message
@@ -546,8 +544,9 @@ class BridgeTests(unittest.TestCase):
         def consumer(args):
             self.assertIsNone(unlock.get_code_prompt_callback()('synthetic.example', ''))
             return json.dumps({'success':False})
-        from tools import send_message_tool as sender
-        with patch.dict(sys.modules, {'gateway.run':gateway_run}), patch('gateway.config.load_gateway_config', return_value=config), patch.object(sender, '_send_to_platform') as transport:
+        from gateway.outbound import send as sender
+        from native_transport import synthetic_gateway_run
+        with synthetic_gateway_run(gateway_run), patch('gateway.config.load_gateway_config', return_value=config), patch.object(sender, '_send_to_platform') as transport:
             result = json.loads(self.call(consumer))
             transport.assert_not_called()
         self.assertEqual(result['status'], 'cancelled')

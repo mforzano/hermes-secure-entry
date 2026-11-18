@@ -64,7 +64,7 @@ def dispatch_message(ctx, name, args):
     from tools.registry import registry
     if registry.get_entry(name) is not None:
         return ctx.dispatch_tool(name, args)
-    from tools.send_message_tool import send_message_tool
+    from gateway.outbound.send import send_message_tool
     return send_message_tool(args)
 
 

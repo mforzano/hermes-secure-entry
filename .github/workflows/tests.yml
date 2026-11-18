@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: NousResearch/hermes-agent
-          ref: 046094df28b712f62a5e3c728a9e59da05dcbf1e
+          ref: ae2a81ccc00e9b7c06301523e5bb09608397149c
           path: hermes
       - uses: actions/setup-python@v5
         with:
