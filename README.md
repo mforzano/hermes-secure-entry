@@ -121,7 +121,7 @@ unchanged. Atomic update, sign-in-once and save-and-sign-in remain unsupported.
 
 ## Private manual OTP fill
 
-On stock Hermes 0.23.2, [`secure_entry_otp_fill`](docs/manual-otp-fill.md) fills an inspected verification-code input or a complete numbered/maxlength split widget in the current captured browser. It asks for one native confirmation, sends one private code link to the originating DM, and verifies the selected field values privately. It never submits the form or uses a saved handle or seed. Choose this route **instead of**, not as a fallback from, the native OTP route below.
+**Unreleased; keep disabled with real codes.** The [manual OTP candidate](docs/manual-otp-fill.md) verifies fills privately on stock Hermes 0.23.2, but later model-facing browser output can still expose populated fields. The linked document records the release blocker.
 
 ## Native OTP and unlock preview (existing route)
 

@@ -52,7 +52,8 @@ class Bridge:
         active.set()
         deadline = self.service.broker.clock() + self.timeout
         def prompt(site, hint):
-            return self.prompt('code', site, bound, generation, requests, active, deadline, diagnostics)
+            return self.prompt('code', site, bound, generation, requests, active, deadline, diagnostics,
+                               otp_scope=(context.get('task_id') or 'default', context.get('turn_id') or ''))
         def unlock_prompt(backend, display):
             return self.prompt('unlock', display or backend, bound, generation, requests, active, deadline, diagnostics)
         try:
@@ -99,7 +100,8 @@ class Bridge:
                     if request.status in ('pending', 'received'):
                         self.service.broker.finish(request.token, 'cancelled')
 
-    def prompt(self, kind, site, bound, generation, requests, active, deadline, diagnostics, *, current=None):
+    def prompt(self, kind, site, bound, generation, requests, active, deadline, diagnostics, *,
+               current=None, otp_scope=None):
         from tools.interrupt import is_interrupted
         service, broker = self.service, self.service.broker
         box = []
@@ -117,6 +119,9 @@ class Bridge:
                     return None
                 if current is not None:
                     current()
+                if otp_scope is not None and not service.claim_otp_prompt(bound, generation, otp_scope):
+                    diagnostics.append('otp_prompt_already_attempted')
+                    return None
                 if service.server is None:
                     try:
                         service.server = Server(broker, port=service.port).__enter__()

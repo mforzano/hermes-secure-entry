@@ -57,7 +57,12 @@ class OtpTests(unittest.TestCase):
                 self.service = kw['handler'].__self__
         self.enterContext(patch.object(ctx, 'register_tool', side_effect=track))
         self.enterContext(patch.object(ctx, 'register_hook'))
-        self.enterContext(patch.object(ctx, 'register_middleware'))
+        middleware = ctx.register_middleware
+        def track_middleware(*args, **kwargs):
+            registration = middleware(*args, **kwargs)
+            self.addCleanup(registration.dispose)
+            return registration
+        self.enterContext(patch.object(ctx, 'register_middleware', side_effect=track_middleware))
         self.enterContext(patch.object(ctx, 'on_unload', side_effect=self.addCleanup))
         self.enterContext(patch.object(ctx, 'get_config', side_effect=lambda key, default=None: 0 if key == 'port' else default))
         plugin.register(ctx)
@@ -113,8 +118,14 @@ class OtpTests(unittest.TestCase):
         return dict(parent=self.fixture.parent, frame=frame, origin='https://merchant.test',
                     frame_origin='https://merchant.test', otp_nodes=nodes)
 
-    def fill(self, args):
-        result = json.loads(self.ctx.dispatch_tool('secure_entry_otp_fill', args, task_id='synthetic-payment'))
+    def tool(self, name, args, turn):
+        from model_tools import handle_function_call
+        return json.loads(handle_function_call(name, args, task_id='synthetic-payment',
+            session_id='synthetic-otp-session', turn_id=turn))
+
+    def fill(self, args, *, turn=None):
+        from uuid import uuid4
+        result = self.tool('secure_entry_otp_fill', args, turn or uuid4().hex)
         self.assertNotIn(self.code, json.dumps(result) + str(self.messages) + str(self.prompts))
         return result
 
@@ -230,12 +241,15 @@ class OtpTests(unittest.TestCase):
             return result
         args = self.install('<input data-otp autocomplete="one-time-code">')
         with patch.object(cls, 'invoke', invoke):
-            result = self.fill(args)
+            result = self.fill(args, turn='ambiguous')
         self.assertEqual(result['status'], 'write_unknown', result)
+        for retry in (self.fill(args, turn='ambiguous'), self.native_code('ambiguous')):
+            self.assertEqual(retry.get('error_type'), 'otp_prompt_already_attempted', retry)
         self.assert_fields([self.code])
         self.assertEqual(self.page.evaluate('window.writes'), 1)
         self.assertEqual((len(self.prompts), len(self.messages)), (1, 1))
         self.assertEqual(next(iter(self.service.broker.requests.values())).status, 'write_unknown')
+        self.assertEqual(self.fill(args, turn='new-turn')['status'], 'filled')
 
     def test_takeover_and_handback_before_entry_refuses(self):
         from tools.bot_desktop import lease
@@ -271,6 +285,48 @@ class OtpTests(unittest.TestCase):
         self.assert_fields([''])
         self.assertEqual(self.page.evaluate('window.writes'), 1)
 
+    def native_code(self, turn):
+        from unittest.mock import patch
+        from tools import browser_vault_tool
+
+        # Do not look up any native backends in this manual-code test.
+        with patch.object(browser_vault_tool, '_saved_login', return_value=(None, None)):
+            return self.tool('browser_vault', {'action': 'enter_code'}, turn)
+
+    def test_manual_consent_denial_blocks_both_routes_until_next_turn(self):
+        args = self.install('<input data-otp autocomplete="one-time-code">')
+        self.choice = 'deny'
+        self.assertEqual(self.fill(args, turn='first')['status'], 'consent_declined')
+        self.choice = 'once'
+        repeat = self.fill(args, turn='first')
+        crossed = self.native_code('first')
+        self.assertEqual((len(self.prompts), len(self.messages)), (1, 0))
+        self.assertEqual(repeat.get('error_type'), 'otp_prompt_already_attempted', repeat)
+        self.assertEqual(crossed.get('error_type'), 'otp_prompt_already_attempted', crossed)
+        self.assertEqual(self.fill(args, turn='second')['status'], 'filled')
+        self.assertEqual((len(self.prompts), len(self.messages)), (2, 1))
+
+    def test_native_cancellation_blocks_both_routes_until_next_turn(self):
+        args = self.install('<input data-otp autocomplete="one-time-code">')
+        self.action = 'cancel'
+        first = self.native_code('first')
+        self.assertEqual(first['status'], 'cancelled', first)
+        self.action = 'submit'
+        repeat = self.native_code('first')
+        crossed = self.fill(args, turn='first')
+        self.assertEqual((len(self.prompts), len(self.messages)), (0, 1))
+        self.assertEqual(repeat.get('error_type'), 'otp_prompt_already_attempted', repeat)
+        self.assertEqual(crossed.get('error_type'), 'otp_prompt_already_attempted', crossed)
+        self.assertEqual(self.fill(args, turn='second')['status'], 'filled')
+
+    def test_native_no_field_leaves_same_turn_available(self):
+        self.install('<input name="search">')
+        first = self.native_code('first')
+        self.assertEqual(first.get('error_type'), 'no_code_field', first)
+        self.assertEqual((len(self.prompts), len(self.messages)), (0, 0))
+        args = self.install('<input data-otp autocomplete="one-time-code">')
+        self.assertEqual(self.fill(args, turn='first')['status'], 'filled')
+
     def test_wire_debug_refuses_before_prompt(self):
         import logging
 
@@ -300,7 +356,7 @@ class OtpTests(unittest.TestCase):
         self.assert_fields([''])
         self.assertEqual((len(self.prompts), len(self.messages)), (1, 1))
 
-    def test_only_selected_cross_origin_document_receives_code(self):
+    def cross_origin_otp(self):
         url = 'https://provider.test/otp'
         self.fixture.context.route(url, lambda r: r.fulfill(content_type='text/html',
             body='<input id="otp" autocomplete="one-time-code">'))
@@ -318,6 +374,30 @@ class OtpTests(unittest.TestCase):
             session.detach()
         args = dict(parent=self.fixture.parent, frame=frame, origin='https://merchant.test',
                     frame_origin='https://provider.test', otp_nodes=[backend])
+        return args, child
+
+    def test_parent_change_after_child_readback_is_unknown(self):
+        from importlib import import_module
+
+        cls = import_module('_secure_entry_otp_test.secure_entry.otp').OtpTarget
+        original = cls.invoke
+        args, child = self.cross_origin_otp()
+        capture = self.fixture.capture
+
+        def invoke(target, sid, obj, js, args=()):
+            result = original(target, sid, obj, js, args)
+            if 'this.verify' in js and result is True:
+                capture.call('Runtime.evaluate', {'expression': "history.pushState(null, '', '#changed')"},
+                             session_id=target.psid)
+            return result
+
+        with patch.object(cls, 'invoke', invoke):
+            result = self.fill(args)
+        self.assertEqual(result['status'], 'write_unknown', result)
+        self.assertTrue(child.evaluate('code=>document.querySelector("#otp").value===code', self.code))
+
+    def test_only_selected_cross_origin_document_receives_code(self):
+        args, child = self.cross_origin_otp()
         result = self.fill(args)
         self.assertEqual(result['status'], 'filled', result)
         self.assertTrue(child.evaluate('code=>document.querySelector("#otp").value===code', self.code))

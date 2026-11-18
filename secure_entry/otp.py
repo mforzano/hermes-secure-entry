@@ -132,6 +132,10 @@ class OtpTarget(RetainedInputTarget):
         self.check()
         if verified is not True or self.invoke(self.csid, self.cg, 'function(){return this.verify();}') is not True:
             raise ValueError('write_unverified')
+        # The child readback cannot attest to its retained parent. Check the
+        # exact parent last; this is a postflight, not an atomic frame fence.
+        if self.invoke(self.psid, self.pg, 'function(){return this.valid();}') is not True:
+            raise ValueError('write_unverified')
 
 
 def fill(service, args, task):
@@ -185,6 +189,10 @@ def fill(service, args, task):
             raise ValueError('parent_origin_mismatch')
         spec = target.spec()
         stage = 'native_consent'
+        target.check()
+        if not service.claim_otp_prompt(bound, generation, (task, service.otp_turn.get())):
+            return json.dumps({'success':False, 'status':'refused', 'stage':stage,
+                               'error_type':'otp_prompt_already_attempted'})
         wait_before, started = human_wait_seconds(bound[-2]), time.monotonic()
         verdict = request_elicitation_consent(
             f'Manual verification-code fill at {document}',
