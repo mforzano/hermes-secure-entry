@@ -1,0 +1,123 @@
+name: Hermes forward compatibility (Windows)
+on:
+  schedule:
+    - cron: '37 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  forward:
+    name: Hermes ${{ matrix.lane }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: [latest-stable, main]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+          persist-credentials: false
+      - name: Resolve latest published stable release or main
+        id: upstream
+        env:
+          LANE: ${{ matrix.lane }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$LANE" in
+            latest-stable)
+              tag=$(gh api repos/NousResearch/hermes-agent/releases/latest --jq '.tag_name')
+              git check-ref-format "refs/tags/$tag"
+              ref="refs/tags/$tag"
+              ;;
+            main) ref=refs/heads/main ;;
+            *) exit 1 ;;
+          esac
+          printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ steps.upstream.outputs.ref }}
+          path: hermes
+          # Hermes derives its base version from reachable release tags.
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Record exact upstream revision
+        env:
+          HERMES_REF: ${{ steps.upstream.outputs.ref }}
+        run: |
+          sha=$(git -C hermes rev-parse --verify HEAD)
+          printf 'Hermes ref: `%s`\n\nHermes commit: `%s`\n\n' "$HERMES_REF" "$sha" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Create disposable test home and temp directory
+        run: |
+          scratch=$(mktemp -d "$(cygpath -u "$RUNNER_TEMP")/secure-entry.XXXXXX")
+          mkdir "$scratch/home" "$scratch/tmp"
+          scratch=$(cygpath -am "$scratch")
+          printf 'HERMES_HOME=%s/home\nTMPDIR=%s/tmp\nTEMP=%s/tmp\nTMP=%s/tmp\n' \
+            "$scratch" "$scratch" "$scratch" "$scratch" >> "$GITHUB_ENV"
+          printf 'PYTHONPYCACHEPREFIX=%s/pycache\n' "$scratch" >> "$GITHUB_ENV"
+      - name: Build isolated native test environment through PM
+        working-directory: hermes
+        run: python -m pm.build_env --source . --out "$GITHUB_WORKSPACE/test-env" --group dev --group test
+      - name: Install test SDKs and provision Chrome
+        id: setup
+        run: |
+          python="$GITHUB_WORKSPACE/test-env/Scripts/python.exe"
+          uv pip install --python "$python" aiohttp python-telegram-bot discord.py playwright
+          "$python" -m playwright install chrome
+      - name: Run synthetic native-vault and browser regressions
+        working-directory: plugin
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/hermes;$GITHUB_WORKSPACE/plugin"
+          "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -m unittest discover -s tests -v
+      - name: Report manifest admission and validate admitted hosts
+        # Report admission independently of the regression result.
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        working-directory: plugin
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/hermes;$GITHUB_WORKSPACE/plugin"
+          python="$GITHUB_WORKSPACE/test-env/Scripts/python.exe"
+          "$python" - <<'PY'
+          import os
+          from pathlib import Path
+          from subprocess import run
+          import sys
+
+          import hermes_yaml
+          from hermes_cli.plugins_manifest import requires_hermes_error, running_hermes_version
+          from packaging.specifiers import SpecifierSet
+          from packaging.version import Version
+
+          manifest = hermes_yaml.safe_load(Path('plugin.yaml').read_text(encoding='utf-8'))
+          spec = manifest['requires_hermes']
+          SpecifierSet(spec)  # Do not interpret a malformed range as an exclusion.
+          version = running_hermes_version()
+          Version(version)  # An unknown checkout version is not evidence of admission.
+          admitted = not requires_hermes_error(manifest)
+          result = 'admitted; running doctor and catalog validation' if admitted else (
+              'not admitted; doctor and catalog validation not run (forward regressions are separate)'
+          )
+          message = f'Manifest admission: Hermes {version}, requires_hermes {spec}: {result}.'
+          print(message if admitted else f'::warning::{message}', flush=True)
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a', encoding='utf-8') as summary:
+              summary.write(f'{message}\n')
+          if admitted:
+              run([sys.executable, '-c',
+                   "from hermes_cli.plugins_cmd import cmd_plugin_doctor; cmd_plugin_doctor('.', ci=True)"],
+                  check=True)
+              run([sys.executable, '-c',
+                   "from hermes_cli.plugins_cmd_catalog import cmd_validate; "
+                   "cmd_validate('.', as_json=True, install_deps=False)"], check=True)
+          PY
