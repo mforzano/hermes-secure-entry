@@ -115,13 +115,13 @@ unchanged. Atomic update, sign-in-once and save-and-sign-in remain unsupported.
 
 1. Ship the achievable **add-vault-login** path as a preview/testing-only partial implementation.
 2. For replacement, add the new login and verify its metadata first. Inspect the new and old handles using the existing native vault tools. Remove the old item only through those existing tools **after explicit user approval**. The plugin never deletes automatically, never implements delete-then-add, and does not call this an atomic same-record update. If a save is `commit_unknown`, inspect the vault before retrying or considering any removal.
-3. Exercise [private manual OTP fill](docs/manual-otp-fill.md) with synthetic data before real use. No OTP link is issued until the intended field(s) are retained and native consent is granted on that route.
+3. Use [private manual OTP fill](docs/manual-otp-fill.md) for an explicitly selected verification-code field or split widget. The tool retains the intended fields and obtains native consent before sending the one-use link.
 
 **Sign-in-once work is dropped for now**; it is not a delivery priority. Its unsupported-operation response remains only to refuse collection safely. Browser save-and-sign-in and atomic same-record update are also not delivered here.
 
 ## Private manual OTP fill
 
-**Unreleased; keep disabled with real codes.** The [manual OTP candidate](docs/manual-otp-fill.md) verifies fills privately on stock Hermes 0.23.2, but later model-facing browser output can still expose populated fields. The linked document records the release blocker.
+[`secure_entry_otp_fill`](docs/manual-otp-fill.md) fills and verifies the selected fields on stock Hermes 0.23.2 without returning the code or submitting the form. Like native OTP fill, it does not isolate populated fields from later browser access. Avoid reading or screenshotting them while the code is present.
 
 ## Native OTP and unlock preview (existing route)
 
@@ -174,7 +174,7 @@ hermes plugins capabilities secure-entry
 
 Or add `--enable` to the source staging command. Set `plugins.isolation` to `in_process` and configure the separate Tailscale Serve route as above. There is no tool-override grant. Plugin capability declarations are empty because it requests none of Hermes's capability-gated host facades; enabling it still trusts in-process native vault writes, native direct-message dispatch and the local listener. **A separately coordinated gateway restart/new process and new conversation are required. The installer does not restart anything.** Do not overwrite an active installed copy: middleware/hooks can hotload into existing sessions even when tool schemas are deferred. This release does not claim a safe live new-session-only activation gate.
 
-`HERMES_HOME/plugins` survives normal Hermes updates; never put this plugin in the core checkout. Rerun doctor and the native contract tests after host updates; this candidate does not claim support for other Hermes versions. The plugin has no self-updater or dependency mutation path. See [the coordinated activation procedure](docs/hermes-0.22.5.md) before replacing loaded middleware. Do not copy this upgrade over a running gateway's installed middleware.
+`HERMES_HOME/plugins` survives normal Hermes updates; never put this plugin in the core checkout. Rerun doctor and the native contract tests after host updates; this version does not claim support for other Hermes versions. The plugin has no self-updater or dependency mutation path. See [the coordinated activation procedure](docs/hermes-0.22.5.md) before replacing loaded middleware. Do not copy this upgrade over a running gateway's installed middleware.
 
 ## Related Hermes core fixes
 
