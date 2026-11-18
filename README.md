@@ -115,11 +115,15 @@ unchanged. Atomic update, sign-in-once and save-and-sign-in remain unsupported.
 
 1. Ship the achievable **add-vault-login** path as a preview/testing-only partial implementation.
 2. For replacement, add the new login and verify its metadata first. Inspect the new and old handles using the existing native vault tools. Remove the old item only through those existing tools **after explicit user approval**. The plugin never deletes automatically, never implements delete-then-add, and does not call this an atomic same-record update. If a save is `commit_unknown`, inspect the vault before retrying or considering any removal.
-3. Exercise the implemented native **OTP callback preview** with synthetic data before real use. No OTP form exists until the native tool inspects an actual code field and supplies its site.
+3. Use [private manual OTP fill](docs/manual-otp-fill.md) for an explicitly selected verification-code field or split widget. The tool retains the intended fields and obtains native consent before sending the one-use link.
 
 **Sign-in-once work is dropped for now**; it is not a delivery priority. Its unsupported-operation response remains only to refuse collection safely. Browser save-and-sign-in and atomic same-record update are also not delivered here.
 
-## Native OTP and unlock preview
+## Private manual OTP fill
+
+[`secure_entry_otp_fill`](docs/manual-otp-fill.md) fills and verifies the selected fields on stock Hermes 0.23.2 without returning the code or submitting the form. Like native OTP fill, it does not isolate populated fields from later browser access. Avoid reading or screenshotting them while the code is present.
+
+## Native OTP and unlock preview (existing route)
 
 Requires `plugins.isolation: in_process`. The bridge refuses host isolation, cron, headless/API, delegated children, group chats, missing task-local identity, mismatched profile, and mismatched middleware/session correlation. It never changes `can_prompt_here` or installs a dummy unlock approval.
 
@@ -133,7 +137,7 @@ Requires `plugins.isolation: in_process`. The bridge refuses host isolation, cro
 
 ## Install and activation
 
-Secure Entry **0.5.18** targets **Hermes 0.23.2** (`==0.23.2`); see [compatibility evidence](docs/hermes-0.23.2.md). For Hermes 0.22.1–0.22.5, use the prior Secure Entry 0.5.17 revision. Python requirements are supplied by Hermes. The plugin declares no additional Python dependencies. Use the PM-prepared Hermes interpreter, not an unrelated system Python and not raw pip against the live runtime.
+Secure Entry **0.5.19** targets **Hermes 0.23.2** (`==0.23.2`); see the [compatibility baseline](docs/hermes-0.23.2.md). For Hermes 0.22.1–0.22.5, use the prior Secure Entry 0.5.17 revision. Python requirements are supplied by Hermes. The plugin declares no additional Python dependencies. Use the PM-prepared Hermes interpreter, not an unrelated system Python and not raw pip against the live runtime.
 
 ### Direct GitHub install (supported Hermes CLI)
 
@@ -170,11 +174,11 @@ hermes plugins capabilities secure-entry
 
 Or add `--enable` to the source staging command. Set `plugins.isolation` to `in_process` and configure the separate Tailscale Serve route as above. There is no tool-override grant. Plugin capability declarations are empty because it requests none of Hermes's capability-gated host facades; enabling it still trusts in-process native vault writes, native direct-message dispatch and the local listener. **A separately coordinated gateway restart/new process and new conversation are required. The installer does not restart anything.** Do not overwrite an active installed copy: middleware/hooks can hotload into existing sessions even when tool schemas are deferred. This release does not claim a safe live new-session-only activation gate.
 
-`HERMES_HOME/plugins` survives normal Hermes updates; never put this plugin in the core checkout. Rerun doctor and the native contract tests after host updates; this candidate does not claim support for other Hermes versions. The plugin has no self-updater or dependency mutation path. See [the coordinated activation procedure](docs/hermes-0.22.5.md) before replacing loaded middleware. Do not copy this upgrade over a running gateway's installed middleware.
+`HERMES_HOME/plugins` survives normal Hermes updates; never put this plugin in the core checkout. Rerun doctor and the native contract tests after host updates; this version does not claim support for other Hermes versions. The plugin has no self-updater or dependency mutation path. See [the coordinated activation procedure](docs/hermes-0.22.5.md) before replacing loaded middleware. Do not copy this upgrade over a running gateway's installed middleware.
 
 ## Related Hermes core fixes
 
-**Stock Hermes 0.22.1 can use this bridge for OTP forms that its native detector selects and recognizes. Neither pending PR is a universal prerequisite, and add-login is independent of these OTP fixes.** The plugin transports native prompts; it does not patch browser selection or field recognition. Affected sites/widgets can need the corresponding core fix:
+**The original bridge can use stock Hermes for forms its native detector selects and recognizes. Neither core PR is a prerequisite for the separate plugin-owned manual OTP route, and add-login is independent of these OTP fixes.** The bridge still transports the original native prompts without patching native browser selection or field recognition:
 
 - [NousResearch/hermes-agent #136831](https://github.com/NousResearch/hermes-agent/pull/136831) — **open/pending**: selects visible OTP fields and, when a saved login handle is supplied to core, binds selection to that handle's allowed origins. It addresses false `no_code_field` failures caused by unrelated tabs with hidden postal/country-code controls. This plugin's preview still refuses nonempty OTP handles; the PR does not enable them here or establish immutable target binding.
 - [NousResearch/hermes-agent #139405](https://github.com/NousResearch/hermes-agent/pull/139405) — **open/pending**: recognizes explicit “enter [the/a] [4–8] digit code” labels and complete, ordered, adjacent 1..N numbered OTP widgets (4–8 digits), with shared actual form/container identity. Invalid/incomplete/mixed groups and unrelated code-like fields are rejected. The updated PR reports 127 focused tests passing on Windows and a real United six-box challenge filled through native private entry; Continue reached the authenticated account menu. That is patched-core evidence, not stock 0.22.1 coverage or proof of all sites.

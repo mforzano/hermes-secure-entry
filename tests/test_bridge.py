@@ -226,7 +226,7 @@ class BridgeTests(unittest.TestCase):
             self.assertEqual(pool.submit(lambda: (unlock.get_code_prompt_callback(), unlock.get_unlock_prompt_callback())).result(5), (None, None))
 
     def test_cancel_expire_reset_and_unload_release_waiter_and_reject_late_post(self):
-        # Each subcase is an independent service because unload closes admission.
+        # Each lifecycle case starts on a different synthetic turn.
         for action in ('form', 'expire', 'reset', 'unload'):
             with self.subTest(action=action):
                 self.sent.clear()
@@ -236,7 +236,7 @@ class BridgeTests(unittest.TestCase):
                     code = unlock.get_code_prompt_callback()('synthetic.example', '')
                     self.assertIsNone(code)
                     return json.dumps({'success': False})
-                t, results, errors = self.worker(lambda: self.call(consumer))
+                t, results, errors = self.worker(lambda: self.call(consumer, turn_id=action))
                 self.assertTrue(self.delivered.wait(5))
                 token = self.sent[-1]['message'].split()[-1].rsplit('/', 1)[1]
                 request = self.service.broker.requests[token]

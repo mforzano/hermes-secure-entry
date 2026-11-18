@@ -77,9 +77,9 @@ def validate_nodes(nodes):
     return list(nodes)
 
 
-class SignupTarget(Target):
+class RetainedInputTarget(Target):
     def __init__(self, capture, args, guard):
-        self.password_nodes = validate_nodes(args["password_nodes"])
+        self.nodes = validate_nodes(args[self.field_key])
         # Non-None mapping selects the existing mapped parent/frame policy only.
         super().__init__(
             capture,
@@ -94,7 +94,7 @@ class SignupTarget(Target):
     def bind_fields(self, context, sid):
         nodes = []
         try:
-            for backend in self.password_nodes:
+            for backend in self.nodes:
                 node = self.call(
                     "DOM.resolveNode",
                     {
@@ -109,7 +109,7 @@ class SignupTarget(Target):
                 "Runtime.callFunctionOn",
                 {
                     "executionContextId": context,
-                    "functionDeclaration": PASSWORDS,
+                    "functionDeclaration": self.binding,
                     "arguments": [{"objectId": n} for n in nodes],
                 },
                 sid,
@@ -123,6 +123,11 @@ class SignupTarget(Target):
                 except Exception:  # noqa: BLE001, S110 -- private cleanup; never log CDP errors
                     pass
 
+
+class SignupTarget(RetainedInputTarget):
+    field_key = "password_nodes"
+    binding = PASSWORDS
+
     def fill_password(self, password):
         self.check()
         self.started = True  # dispatch may write even if CDP's reply is lost
@@ -134,13 +139,13 @@ class SignupTarget(Target):
             not isinstance(result, dict)
             or result.get("valid") is not True
             or type(result.get("written")) is not int
-            or result["written"] != len(self.password_nodes)
+            or result["written"] != len(self.nodes)
         ):
             raise ValueError("write_unverified")
         return {
             "success": True,
             "status": "filled",
-            "filled_fields": len(self.password_nodes),
+            "filled_fields": len(self.nodes),
             "submitted": False,
         }
 

@@ -1,4 +1,4 @@
-# Hermes 0.23.2 compatibility (Secure Entry 0.5.18)
+# Hermes 0.23.2 compatibility (Secure Entry 0.5.18 and 0.5.19)
 
 The manifest targets `==0.23.2`; Secure Entry 0.5.17 remains the revision for
 Hermes 0.22.1–0.22.5. The earlier manifest rejects 0.23.2 before `register()`.
@@ -6,8 +6,12 @@ Hermes 0.22.1–0.22.5. The earlier manifest rejects 0.23.2 before `register()`.
 The native send fallback follows Hermes's own `hermes send` command to
 `gateway.outbound.send.send_message_tool`, replacing the old `tools` import.
 If a registered send tool exists it still takes precedence. Neither route is
-retried through the other after a failure. No changes were made to identity,
-consent, destination binding, vault or browser write policy.
+retried through the other after a failure. The sender import change did not
+change identity, consent, destination binding, vault or browser write policy.
+
+Secure Entry 0.5.19 adds [private manual OTP fill](manual-otp-fill.md) on this
+stock host without a core patch. It fills and verifies selected controls
+without submitting the form or adding restrictions on later browser access.
 
 The Windows suite pins the upstream `v0.23.2` source revision
 `ae2a81ccc00e9b7c06301523e5bb09608397149c`. The tests use a disposable

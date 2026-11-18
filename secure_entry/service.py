@@ -2,6 +2,7 @@
 import json
 import secrets
 import threading
+from contextvars import ContextVar
 from .broker import Broker
 from .server import Server
 from .native import MissingSessionID, MissingSessionBinding, add_login, add_card, owner, validate_origin
@@ -22,6 +23,19 @@ class Service:
         self.lock = threading.RLock()
         self.generation = 0
         self.closed = False
+        self.otp_turn = ContextVar('secure_entry_otp_turn', default='')
+        self.otp_attempts = set()
+
+    def claim_otp_prompt(self, bound, generation, scope):
+        """Spend the shared attempt at consent or native prompt handoff, not inspection."""
+        key = (bound, *scope)
+        with self.lock:
+            if self.closed or generation != self.generation:
+                raise ValueError('operation_invalidated')
+            if key in self.otp_attempts:
+                return False
+            self.otp_attempts.add(key)
+            return True
 
     def configure_bridge(self, dispatch, isolation):
         from .bridge import Bridge
@@ -41,6 +55,10 @@ class Service:
         from .signup import SignupFill
         return SignupFill(self).fill(args, **kwargs)
 
+    def otp_fill(self, args, **kwargs):
+        from .otp import fill
+        return fill(self, args, kwargs.get('task_id'))
+
     def payment_fill(self, args, **kwargs):
         return self.payment.fill(args, **kwargs)
 
@@ -50,6 +68,13 @@ class Service:
         return LocalPayment(self, [], card_source=VaultCardSource(self)).fill(args, **kwargs)
 
     def middleware(self, *, tool_name, args, next_call, **context):
+        if tool_name == 'secure_entry_otp_fill':
+            # Standard registry handlers don't receive turn_id on 0.23.2.
+            token = self.otp_turn.set(context.get('turn_id') or '')
+            try:
+                return next_call(args)
+            finally:
+                self.otp_turn.reset(token)
         # Hermes 0.22.1 consolidates the native tools into browser_vault actions.
         # Normalize only the bridge's existing scopes; fill/save/unknown actions
         # keep their native path and never acquire our prompt callbacks.
@@ -204,6 +229,10 @@ class Service:
             return json.dumps({'status':'unavailable'})
 
     def ended(self, turn_id='', completed=False, failed=False, interrupted=False, **kwargs):
+        if turn_id and kwargs.get('session_id') and kwargs.get('task_id'):
+            with self.lock:
+                self.otp_attempts = {key for key in self.otp_attempts if
+                    (key[0][-1], key[1], key[2]) != (kwargs['session_id'], kwargs['task_id'], turn_id)}
         # Hermes currently also emits on_session_end after EACH normal message.
         # These links must survive delivery of that message to the user.
         if turn_id and completed and not failed and not interrupted:
@@ -228,6 +257,7 @@ class Service:
     def close(self):
         with self.lock:
             self.closed = True
+            self.otp_attempts.clear()
             self.generation += 1
             if self.server:
                 self.server.close()
