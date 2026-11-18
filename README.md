@@ -228,7 +228,7 @@ Demo uses an actual native encrypted vault in a disposable scratch directory, **
 
 ## Tests
 
-The [pinned Windows workflow](.github/workflows/tests.yml) runs on pushes and pull requests. The separate [Windows forward-compatibility workflow](.github/workflows/hermes-compatibility.yml) runs Mondays at 09:37 UTC on the default branch or from **Actions → Hermes forward compatibility (Windows) → Run workflow**. It checks the latest published stable release and upstream `main` independently, records the exact Hermes commits, and runs the synthetic regression suite against both.
+The [pinned Windows workflow](.github/workflows/tests.yml) runs on pushes and pull requests. The separate [Windows forward-compatibility workflow](.github/workflows/hermes-compatibility.yml) runs Mondays at 09:37 UTC on the default branch or from **Actions → Hermes forward compatibility (Windows) → Run workflow**. It also runs on pull requests that change the forward workflow. It checks the latest published stable release and upstream `main` independently, records the exact Hermes commits, and runs the synthetic regression suite against both.
 
 Forward regressions run even when `plugin.yaml` does not admit that Hermes version. The run summary reports manifest admission separately; doctor and catalog validation run only for admitted versions. An out-of-range host can pass the regressions, but that does not make it supported or installable. A regression or setup failure still fails its lane. Neither lane uses a live vault, browser profile, or account.
 
