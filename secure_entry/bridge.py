@@ -99,7 +99,7 @@ class Bridge:
                     if request.status in ('pending', 'received'):
                         self.service.broker.finish(request.token, 'cancelled')
 
-    def prompt(self, kind, site, bound, generation, requests, active, deadline, diagnostics):
+    def prompt(self, kind, site, bound, generation, requests, active, deadline, diagnostics, *, current=None):
         from tools.interrupt import is_interrupted
         service, broker = self.service, self.service.broker
         box = []
@@ -115,6 +115,8 @@ class Bridge:
                         or generation != service.generation
                         or self.bound_owner({'session_id': bound[-1]}) != bound):
                     return None
+                if current is not None:
+                    current()
                 if service.server is None:
                     try:
                         service.server = Server(broker, port=service.port).__enter__()
@@ -136,6 +138,8 @@ class Bridge:
                 return None
             while True:
                 with service.lock, broker.lock:
+                    if current is not None:
+                        current()
                     if is_interrupted() or not active.is_set() or service.closed or generation != service.generation:
                         if request.status in ('pending', 'received'):
                             broker.finish(request.token, 'cancelled')

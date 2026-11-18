@@ -13,6 +13,17 @@ def register(ctx):
     service.payment = LocalPayment(service, ctx.get_config('link_cli_command', default=[]))
     ctx.register_middleware('tool_execution', service.middleware)
     definitions = [
+        ('secure_entry_otp_fill', service.otp_fill,
+         'Private manual verification-code fill in the exact inspected browser document. Choose this OR native browser_vault enter_code before prompting; never fall back or retry after either route starts. '
+         'Select only the intended OTP input or the complete scoped split widget by CDP backendNodeId. One native consent and one private DM link; no handle, seed, code, selector or script in arguments. '
+         'Never submits. write_unknown means disclosure may have occurred; inspect only value-free state.',
+         {'origin':{'type':'string','description':'Exact HTTPS origin of the inspected top-level page.'},
+          'parent':{'type':'string','description':'Exact inspected page target ID on the task-captured browser.'},
+          'frame':{'type':'string','description':'Exact root frame ID or direct iframe ID of the selected OTP document.'},
+          'frame_origin':{'type':'string','description':'Exact HTTPS origin of the selected OTP document.'},
+          'otp_nodes':{'type':'array','minItems':1,'maxItems':12,'uniqueItems':True,'items':{'type':'integer','minimum':1},
+                       'description':'CDP backendNodeId for the intended OTP input or every member of one complete split widget; no other controls.'}},
+         ['origin','parent','frame','frame_origin','otp_nodes']),
         ('secure_entry_signup_fill', service.signup_fill,
          'Explicitly consented REGISTRATION password fill from an existing saved native login handle. '
          'Inspect the exact selected page/frame and choose actual writable password backend node IDs, including confirmation if present. '
@@ -73,8 +84,8 @@ def register(ctx):
          'For reusable storage use add_reusable_card without origin; the private page requires explicit opt-in to retain one cross-website card until explicit deletion. For add_card first determine the official merchant checkout origin (not the cross-origin payment iframe); bind it exactly. '
          'The native payment contract encrypts and persists CVC too; the private form discloses this. Retain saved handle for '
          'secure_entry_card_fill. Reusable cards remain until explicitly requested deletion, not automatic checkout cleanup. Bound cards retain explicit cleanup after verifying checkout outcome. Link remains available separately. '
-         'Photon, Discord, or Telegram DM only (Discord/Telegram synthetic-tested; live verification pending). Does not sign in. For verification codes call browser_vault action=enter_code WITHOUT a handle; '
-         'its native inspection arms a private form and sends its link to this DM. Update, transient sign-in and save-and-sign-in '
+         'Photon, Discord, or Telegram DM only (Discord/Telegram synthetic-tested; live verification pending). Does not sign in. For verification codes choose secure_entry_otp_fill or the existing browser_vault action=enter_code WITHOUT a handle before prompting; this request tool does not collect codes. '
+         'Update, transient sign-in and save-and-sign-in '
          'remain unsupported. Never pass credentials or codes in tool arguments.',
          {'operation': {'type':'string', 'enum':['add_login','add_card','add_reusable_card','update_login','sign_in_once','save_and_sign_in','verification_code']},
           'origin': {'type':'string','description':'Required exact HTTPS website origin for add_login/add_card. Omit for add_reusable_card, which additionally requires explicit opt-in on the private form.'}},

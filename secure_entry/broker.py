@@ -176,6 +176,10 @@ class Broker:
                 content += '<p>The native password manager reports unlocked. No website authentication has been verified.</p>'
             elif status == 'commit_unknown' and request.kind != 'login':
                 content += '<p>Input handed to the native tool; outcome not yet verified. Inspect the browser or manager before retrying. Cancellation cannot undo a native action already begun.</p>'
+            elif status == 'write_unknown':
+                content += '<p>The code may have reached the website. The write could not be verified. Do not submit another code; check the website state first.</p>'
+            elif status == 'code_mismatch':
+                content += '<p>The entered code did not match the selected field format or length. No code was sent to the website.</p>'
             elif status == 'commit_unknown':
                 content += ('<p>The save may have completed, but could not be verified. '
                             'Inspect the native vault before retrying to avoid duplicate items. '

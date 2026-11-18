@@ -41,6 +41,10 @@ class Service:
         from .signup import SignupFill
         return SignupFill(self).fill(args, **kwargs)
 
+    def otp_fill(self, args, **kwargs):
+        from .otp import fill
+        return fill(self, args, kwargs.get('task_id'))
+
     def payment_fill(self, args, **kwargs):
         return self.payment.fill(args, **kwargs)
 
