@@ -5,18 +5,21 @@ import unittest
 import hermes_yaml as yaml
 from packaging.specifiers import SpecifierSet
 from agent.vault_backends import unlock
+from hermes_cli.plugins_manifest import version_satisfies
 from tools import browser_vault_tool  # register the actual native handler
 from tools.registry import registry
 
 
 class HermesCompatibilityTests(unittest.TestCase):
-    def test_manifest_accepts_exercised_current_host_and_excludes_next_minor(self):
+    def test_manifest_targets_only_hermes_0_23_2(self):
         manifest = yaml.safe_load((Path(__file__).parents[1] / 'plugin.yaml').read_text(encoding='utf-8'))
         supported = SpecifierSet(manifest['requires_hermes'])
-        self.assertIn('0.22.1', supported)
-        self.assertIn('0.22.5', supported)
-        self.assertNotIn('0.22.6', supported)
-        self.assertNotIn('0.23.0', supported)
+        self.assertIn('0.23.2', supported)
+        self.assertTrue(version_satisfies(str(supported), '0.23.2'))
+        for other_release in ('0.22.5', '0.22.6', '0.23.0', '0.23.1', '0.23.3', '0.24.0'):
+            with self.subTest(other_release=other_release):
+                self.assertNotIn(other_release, supported)
+                self.assertFalse(version_satisfies(str(supported), other_release))
 
     def test_actual_registered_native_schema_retains_intercepted_actions(self):
         entry = registry.get_entry('browser_vault')

@@ -77,8 +77,7 @@ class PaymentBrowserTests(unittest.TestCase):
         from secure_entry.service import Service
         from gateway.session_context import set_session_vars, clear_session_vars
         from hermes_constants import get_hermes_home, profile_name_for_home
-        from tools import approval, browser_tool
-        from unittest.mock import patch
+        from tools import approval
 
         tokens = set_session_vars(
             platform="photon",
@@ -139,22 +138,19 @@ class PaymentBrowserTests(unittest.TestCase):
                 self.assertIsNotNone(registration)
                 self.addCleanup(registration.dispose)
                 handler=lambda args, **kw:ctx.dispatch_tool('secure_entry_payment_fill',args,**kw)
-            # Deliberately no legacy session metadata: BrowserUse dispatch does
-            # not populate the native task-key cache for every route.
-            with patch.dict(browser_tool._active_sessions, {}, clear=True):
-                result = json.loads(
-                    handler(
-                        {
-                            "parent": self.parent,
-                            "frame": self.frame,
-                            "merchant_origin": "https://merchant.test",
-                            "frame_origin": frame_origin,
-                            "spend_request_id": "lsrq_synthetic",
-                            **({'field_mapping':field_mapping} if field_mapping is not None else {}),
-                        },
-                        task_id="synthetic-payment",
-                    )
+            result = json.loads(
+                handler(
+                    {
+                        "parent": self.parent,
+                        "frame": self.frame,
+                        "merchant_origin": "https://merchant.test",
+                        "frame_origin": frame_origin,
+                        "spend_request_id": "lsrq_synthetic",
+                        **({'field_mapping':field_mapping} if field_mapping is not None else {}),
+                    },
+                    task_id="synthetic-payment",
                 )
+            )
         self.assertEqual(len(prompts), expected_prompts)
         return result, prompts
 
@@ -1380,15 +1376,15 @@ class PaymentBrowserTests(unittest.TestCase):
             with (
                 patch.object(bu, "_base_subprocess_env", return_value=base.copy()),
                 patch.object(bu, "_real_profile_consented", return_value=False),
-                patch.object(bu, "_resolve_local_engine_cdp", side_effect=provision),
-                patch("tools.browser_tool_cdp._get_cdp_override", return_value=""),
-                patch("tools.browser_tool_cdp._get_cdp_override_raw", return_value=""),
+                patch.object(bu, "_resolve_local_cdp", side_effect=provision),
+                patch("tools.browser_session_cdp.get_cdp_override", return_value=""),
+                patch("tools.browser_session_cdp.get_cdp_override_raw", return_value=""),
                 patch(
-                    "tools.browser_tool_cloud._get_cloud_provider",
+                    "tools.browser_session_cloud.get_cloud_provider",
                     return_value=object() if hybrid else None,
                 ),
                 patch(
-                    "tools.browser_tool_cloud._auto_local_for_private_urls",
+                    "tools.browser_session_cloud.auto_local_for_private_urls",
                     return_value=True,
                 ),
                 patch.object(bu, "_read_browser_cfg", return_value={}),

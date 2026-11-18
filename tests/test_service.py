@@ -94,15 +94,16 @@ class ServiceTests(unittest.TestCase):
                 _running_agents={}, _same_chat_runs=Mock(return_value=[]),
                 _sibling_thread_run_keys=Mock(return_value=[]), _chat_scoped_run_keys=Mock(return_value=[]),
                 _interrupt_and_clear_session=AsyncMock(), _hm_stop_owner_turn=AsyncMock(), adapters={})
-            event = SimpleNamespace(source=SimpleNamespace(platform='photon', chat_id='synthetic-chat'))
+            from gateway.platforms.event import MessageEvent
+            event = MessageEvent(text='/stop', source=SimpleNamespace(platform='photon', chat_id='synthetic-chat'))
             # Isolate the host launcher import, not stop dispatch logic. Importing
             # gateway.run would relaunch the test runner into the live PM runtime.
-            import sys
             from types import ModuleType
+            from native_transport import synthetic_gateway_run
             constants = ModuleType('gateway.run')
             constants._AGENT_PENDING_SENTINEL = object()
             constants._INTERRUPT_REASON_STOP = 'stop_command'
-            with patch.dict(sys.modules, {'gateway.run':constants}), patch('tools.async_delegation.interrupt_for_session', return_value=0):
+            with synthetic_gateway_run(constants), patch('tools.async_delegation.interrupt_for_session', return_value=0):
                 asyncio.run(GatewaySlashCommandsMixin._handle_stop_command(runner, event))
             runner._interrupt_and_clear_session.assert_not_awaited()
             self.assertEqual(json.loads(service.status({'request_id':result['request_id']}))['status'], 'pending')

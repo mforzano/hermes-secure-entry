@@ -13,8 +13,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: NousResearch/hermes-agent
-          ref: 046094df28b712f62a5e3c728a9e59da05dcbf1e
+          ref: ae2a81ccc00e9b7c06301523e5bb09608397149c
           path: hermes
+          # Doctor and catalog validation need the actual tagged host version.
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -38,6 +42,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: |
           export PYTHONPATH="$GITHUB_WORKSPACE/hermes;$GITHUB_WORKSPACE/plugin"
+          "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -c "from hermes_cli.plugins_manifest import running_hermes_version; assert running_hermes_version() == '0.23.2', running_hermes_version()"
           "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -m unittest discover -s tests -v
           "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -c "from hermes_cli.plugins_cmd import cmd_plugin_doctor; cmd_plugin_doctor('.', ci=True)"
           "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -c "from hermes_cli.plugins_cmd_catalog import cmd_validate; cmd_validate('.', as_json=True, install_deps=False)"

@@ -9,7 +9,6 @@ from hermes_constants import get_hermes_home, profile_name_for_home
 from secure_entry.service import Service
 from secure_entry.payment import LocalPayment
 from secure_entry.native import owner
-from tools import browser_tool
 
 
 class PaymentAdmissionTests(unittest.TestCase):
@@ -41,7 +40,6 @@ class PaymentAdmissionTests(unittest.TestCase):
             "frame_origin": "https://provider.test",
             "spend_request_id": "lsrq_synthetic",
         }
-        self.key = browser_tool._last_session_key("synthetic-payment")
 
     def test_retrieval_failure_stage_and_version_are_fixed_and_secret_free(self):
         from types import SimpleNamespace
@@ -190,7 +188,6 @@ class PaymentAdmissionTests(unittest.TestCase):
         from types import SimpleNamespace
 
         with (
-            patch.dict(browser_tool._active_sessions, {}, clear=True),
             patch(
                 "tools.browser_supervisor.SUPERVISOR_REGISTRY.capture",
                 return_value=SimpleNamespace(is_valid=lambda: True),
@@ -215,9 +212,6 @@ class PaymentAdmissionTests(unittest.TestCase):
 
         with (
             patch("secure_entry.payment.owner", side_effect=acquire),
-            patch.dict(
-                browser_tool._active_sessions, {self.key: {"features": {"local": True}}}
-            ),
             patch("tools.browser_supervisor.SUPERVISOR_REGISTRY.capture") as capture,
         ):
             result = json.loads(

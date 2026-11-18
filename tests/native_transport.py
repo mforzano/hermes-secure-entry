@@ -1,7 +1,25 @@
 """Network-only fakes for native one-shot bot senders; never contact a service."""
 from contextlib import ExitStack, contextmanager
+from importlib import import_module
+import os
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
+
+
+@contextmanager
+def synthetic_gateway_run(module):
+    # Replace only the launcher: restoring all of sys.modules would also
+    # discard real modules imported by deferred plugin discovery.
+    old = sys.modules.get('gateway.run')
+    sys.modules['gateway.run'] = module
+    try:
+        yield
+    finally:
+        if old is None:
+            sys.modules.pop('gateway.run', None)
+        else:
+            sys.modules['gateway.run'] = old
 
 
 @contextmanager
@@ -28,11 +46,19 @@ def synthetic_bot_network(platform, deliver):
                     return Sent()
             stack.enter_context(patch('aiohttp.ClientSession', Session))
         elif platform == 'telegram':
+            from gateway.outbound.send import prepare_send_message_platforms
+            from gateway.platform_registry import platform_registry
+
+            # Let the native loader resolve the bundled Telegram plugin. Patch
+            # the registered module instance (not an independently imported copy).
+            stack.enter_context(patch.dict(os.environ, {'TELEGRAM_BOT_TOKEN': 'SYNTHETIC-BOT-TOKEN'}))
+            prepare_send_message_platforms()
+            sender = platform_registry.get('telegram').standalone_sender_fn
             class Bot:
                 async def send_message(self, **kwargs):
                     import re
                     text = re.sub(r'\\(.)', r'\1', kwargs['text'])
                     await deliver(chat_id=str(kwargs['chat_id']), content=text)
                     return SimpleNamespace(message_id='synthetic-message-id')
-            stack.enter_context(patch('tools.send_message_senders._telegram_bot', return_value=Bot()))
+            stack.enter_context(patch.object(import_module(sender.__module__), '_telegram_bot', return_value=Bot()))
         yield
