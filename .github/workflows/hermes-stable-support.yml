@@ -11,6 +11,7 @@ on:
     paths:
       - '.github/workflows/hermes-stable-support.yml'
       - '.github/stable_support/**'
+      - 'tests/test_hermes_compatibility.py'
 
 permissions:
   contents: read
