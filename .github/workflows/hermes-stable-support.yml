@@ -1,0 +1,149 @@
+name: Hermes stable support proposal
+on:
+  schedule:
+    - cron: '17 12 * * 1'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional exact official stable tag for a read-only dry run (default: latest)'
+        type: string
+  pull_request:
+    paths:
+      - '.github/workflows/hermes-stable-support.yml'
+      - '.github/stable_support/**'
+      - 'tests/test_hermes_compatibility.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-stable-support-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'mforzano/hermes-secure-entry'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      candidate: ${{ steps.plan.outputs.candidate }}
+      plan: ${{ steps.plan.outputs.plan }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Test policy and publication guards
+        run: python3 -m unittest discover -s .github/stable_support -v
+      - name: Resolve official stable releases and plan exact manifest bytes
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: python3 .github/stable_support/automation.py plan
+
+  validate:
+    if: needs.plan.outputs.candidate == 'true'
+    needs: plan
+    name: Verify candidate on Hermes ${{ matrix.tag }}
+    runs-on: windows-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: plugin
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ${{ matrix.sha }}
+          path: hermes
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Check exact landed tag and commit
+        env:
+          HOST_TAG: ${{ matrix.tag }}
+          HOST_SHA: ${{ matrix.sha }}
+        run: |
+          test "$(git -C hermes rev-parse --verify HEAD)" = "$HOST_SHA"
+          test "$(git -C hermes rev-parse --verify "refs/tags/$HOST_TAG^{commit}")" = "$HOST_SHA"
+          printf 'Official Hermes tag: `%s` at `%s`\n' "$HOST_TAG" "$HOST_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: false
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+      - name: Stage candidate and set disposable home
+        working-directory: plugin
+        env:
+          APPROVED_PLAN: ${{ needs.plan.outputs.plan }}
+        run: |
+          python .github/stable_support/automation.py stage
+          scratch=$(mktemp -d "$(cygpath -u "$RUNNER_TEMP")/secure-entry-stable.XXXXXX")
+          mkdir "$scratch/home" "$scratch/tmp"
+          scratch=$(cygpath -am "$scratch")
+          printf 'HERMES_HOME=%s/home\nTMPDIR=%s/tmp\nTEMP=%s/tmp\nTMP=%s/tmp\nPYTHONPYCACHEPREFIX=%s/pycache\n' \
+            "$scratch" "$scratch" "$scratch" "$scratch" "$scratch" >> "$GITHUB_ENV"
+      - name: Build isolated native test environment through PM
+        working-directory: hermes
+        run: python -m pm.build_env --source . --out "$GITHUB_WORKSPACE/test-env" --group dev --group test
+      - name: Install test SDKs and provision Chrome
+        run: |
+          python="$GITHUB_WORKSPACE/test-env/Scripts/python.exe"
+          uv pip install --python "$python" aiohttp python-telegram-bot discord.py playwright
+          "$python" -m playwright install chrome
+      - name: Require exact version, admission, registration, doctor and catalog validation
+        working-directory: plugin
+        env:
+          APPROVED_PLAN: ${{ needs.plan.outputs.plan }}
+          HOST_TAG: ${{ matrix.tag }}
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/hermes;$GITHUB_WORKSPACE/plugin"
+          "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" .github/stable_support/validate.py
+      - name: Run synthetic native-vault and browser regressions
+        working-directory: plugin
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/hermes;$GITHUB_WORKSPACE/plugin"
+          "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -m unittest discover -s tests -v
+
+  disposition:
+    if: needs.validate.result == 'success' && (github.event_name != 'schedule' || vars.HERMES_STABLE_PR_WRITES != 'true')
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report validated dry run with no writes
+        run: printf '%s\n' 'Candidate checks passed. This run did not publish a branch or PR (dry run or writer not enabled).' >> "$GITHUB_STEP_SUMMARY"
+
+  propose:
+    if: >-
+      github.repository == 'mforzano/hermes-secure-entry' && github.event_name == 'schedule' &&
+      github.ref == 'refs/heads/main' && vars.HERMES_STABLE_PR_WRITES == 'true' &&
+      needs.plan.outputs.candidate == 'true' && needs.validate.result == 'success'
+    needs: [plan, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Recompute and open a manifest-only PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_PLAN: ${{ needs.plan.outputs.plan }}
+          RESULT: ${{ needs.validate.result }}
+        run: python3 .github/stable_support/automation.py publish
