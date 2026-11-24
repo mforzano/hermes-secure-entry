@@ -35,7 +35,12 @@ class RegistrationTests(unittest.TestCase):
         plugin.register(ctx)
         self.assertEqual(set(ctx.tools), {'secure_entry_request', 'secure_entry_status', 'secure_entry_cancel',
             'secure_entry_payment_fill', 'secure_entry_card_fill', 'secure_entry_card_remove', 'secure_entry_card_list',
-            'secure_entry_signup_fill', 'secure_entry_otp_fill'})
+            'secure_entry_signup_fill', 'secure_entry_login_fill', 'secure_entry_otp_fill'})
+        login = ctx.tools['secure_entry_login_fill']['schema']['parameters']
+        self.assertEqual(set(login['required']), {'handle','origin','identifier','parent','frame','loader_id','password_node'})
+        self.assertEqual(set(login['required']), set(login['properties']))
+        self.assertFalse(login['additionalProperties'])
+        self.assertEqual(login['properties']['password_node']['type'], 'integer')
         otp = ctx.tools['secure_entry_otp_fill']['schema']['parameters']
         self.assertEqual(set(otp['properties']), {'origin','parent','frame','frame_origin','otp_nodes'})
         self.assertEqual(set(otp['required']), set(otp['properties']))
@@ -46,6 +51,9 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(signup['properties']['password_nodes']['items']['type'], 'integer')
         request_params = ctx.tools['secure_entry_request']['schema']['parameters']
         self.assertIn('add_reusable_card', request_params['properties']['operation']['enum'])
+        self.assertIn('rename_reusable_card', request_params['properties']['operation']['enum'])
+        self.assertIn('handle', request_params['properties'])
+        self.assertNotIn('nickname', request_params['properties'])
         self.assertNotIn('origin', request_params['required'])
         self.assertEqual(ctx.tools['secure_entry_card_remove']['schema']['parameters']['required'], ['handle'])
         self.assertIn('add_card', ctx.tools['secure_entry_request']['schema']['parameters']['properties']['operation']['enum'])

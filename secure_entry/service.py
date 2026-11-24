@@ -4,6 +4,7 @@ import secrets
 import threading
 from contextvars import ContextVar
 from .broker import Broker
+from .card_nicknames import CardNicknames
 from .server import Server
 from .native import MissingSessionID, MissingSessionBinding, add_login, add_card, owner, validate_origin
 
@@ -19,6 +20,7 @@ class Service:
         self.broker = Broker(public_base_url)
         self.home, self.port, self.store_factory = home, port, store_factory
         self.server = None
+        self.nickname_home = home
         self.ids = {}
         self.lock = threading.RLock()
         self.generation = 0
@@ -50,6 +52,11 @@ class Service:
         if not isinstance(args, dict) or 'field_mapping' not in args:
             return json.dumps({'success':False,'status':'refused','refusal':'field_mapping_required'})
         return self.card_fill(args, **kwargs)
+
+    def login_fill(self, args, **kwargs):
+        from .login import LoginFill
+
+        return LoginFill(self).fill(args, **kwargs)
 
     def signup_fill(self, args, **kwargs):
         from .signup import SignupFill
@@ -105,34 +112,56 @@ class Service:
                     'instruction':'Call the native tool without a handle. Only its inspected site can arm a private form. Never type a code in chat. Links are sent directly to this originating DM and may appear in history.'})
             if operation in BLOCKERS:
                 return json.dumps({'status':'unsupported_native_contract', 'operation':operation, 'reason':BLOCKERS[operation]})
-            if operation not in ('add_login', 'add_card', 'add_reusable_card'):
+            if operation not in ('add_login', 'add_card', 'add_reusable_card', 'rename_reusable_card'):
                 return json.dumps({'status':'invalid_operation'})
             reusable = operation == 'add_reusable_card'
-            if reusable and args.get('origin') not in (None, ''):
+            rename = operation == 'rename_reusable_card'
+            if (reusable or rename) and args.get('origin') not in (None, ''):
                 raise ValueError('reusable_has_no_origin')
-            origin = 'Reusable across websites' if reusable else validate_origin(args.get('origin', ''))
+            if not rename and 'handle' in args:
+                raise ValueError('unexpected_handle')
+            origin = 'Reusable across websites' if reusable or rename else validate_origin(args.get('origin', ''))
             from agent.vault_store import get_vault_store
             # Resolve the profile-scoped native object HERE, not on an unrelated HTTP thread.
             store = self.store_factory() if self.store_factory else get_vault_store()
+            current_nickname = None
+            if rename:
+                import re
+                from .native import is_reusable_card
+                handle = args.get('handle')
+                if (not isinstance(handle, str) or not re.fullmatch(r'vault_[0-9a-f]{12}', handle)
+                        or not is_reusable_card(store.get_meta(handle))):
+                    raise ValueError('card_unavailable')
+                nicknames = CardNicknames(self.nickname_home)
+                current_nickname = nicknames.snapshot().get(handle)
+
+                def apply(fields):
+                    return {'status': nicknames.rename(store, handle, current_nickname, fields['nickname'])}
+
             with self.lock:
-                if self.closed or generation != self.generation:
+                if self.closed or generation != self.generation or (rename and owner(self.home) != bound):
                     return json.dumps({'status':'cancelled'})
                 if self.server is None:
                     try:
                         self.server = Server(self.broker, port=self.port).__enter__()
                     except OSError:
                         return json.dumps({'status':'unavailable', 'error_type':'listener_binding_failed'})
-                apply = (lambda fields: add_card(store, None, fields, reusable=True)) if reusable else (
-                    lambda fields: (add_card if operation == 'add_card' else add_login)(store, origin, fields))
-                kind = 'reusable_card' if reusable else 'card' if operation == 'add_card' else 'login'
-                request = self.broker.issue(kind, origin, bound, apply)
+                if rename:
+                    kind = 'card_nickname'
+                else:
+                    apply = (lambda fields: CardNicknames(self.nickname_home).save(store, fields)) if reusable else (
+                        lambda fields: (add_card if operation == 'add_card' else add_login)(store, origin, fields))
+                    kind = 'reusable_card' if reusable else 'card' if operation == 'add_card' else 'login'
+                request = self.broker.issue(kind, origin, bound, apply, nickname=current_nickname)
                 with self.broker.lock:
                     self.ids = {rid: item for rid, item in self.ids.items() if item[0] in self.broker.requests}
                 request_id = secrets.token_hex(16)
                 self.ids[request_id] = (request.token, bound)
             return json.dumps({'status':'pending', 'request_id':request_id, 'url':self.broker.url(request),
                                'origin':origin, 'operation':operation, 'expires_in_seconds':600,
-                               'instruction':'Send this one-use link only in this originating conversation. The page saves a new native vault item; it does not sign in.'})
+                               'instruction':('Send this one-use link only in this originating conversation. '
+                                    + ('The page changes only the selected reusable card nickname.' if rename else
+                                       'The page saves a new native vault item; it does not sign in.'))})
         except MissingSessionID:
             return json.dumps({'status':'unavailable', 'error_type':'missing_session_id'})
         except MissingSessionBinding:
@@ -160,6 +189,7 @@ class Service:
                 generation = self.generation
             bound = owner(self.home)
             store = self.store_factory() if self.store_factory else get_vault_store()
+            nicknames = CardNicknames(self.nickname_home).snapshot()
             cards = []
             for meta in store.list_items():
                 reusable = is_reusable_card(meta)
@@ -171,7 +201,8 @@ class Service:
                     except Exception:
                         continue
                 cards.append({'handle':meta.id, 'scope':'reusable' if reusable else 'merchant_bound',
-                              'origin':meta.origin})
+                              'origin':meta.origin,
+                              **({'nickname': nicknames.get(meta.id)} if reusable else {})})
             with self.lock:
                 if self.closed or generation != self.generation or owner(self.home) != bound:
                     raise ValueError('cancelled')
@@ -210,6 +241,13 @@ class Service:
                 store.remove_item(handle)
                 if store.get_meta(handle) is not None:
                     raise ValueError('still_present')
+                if is_reusable_card(meta):
+                    try:
+                        CardNicknames(self.nickname_home).forget(handle)
+                    except Exception:
+                        # A stale display row cannot grant access or appear in the list.
+                        # Never downgrade verified native deletion to unknown.
+                        pass
                 return json.dumps({'status':'deleted', 'handle':handle})
         except Exception:
             return json.dumps({'status':'deletion_unknown' if started else 'refused'})

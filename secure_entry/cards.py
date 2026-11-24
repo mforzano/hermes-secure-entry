@@ -1,5 +1,7 @@
 """Native payment-kind storage adapter, never a second vault or login payload."""
 import re
+from .card_nicknames import CardNicknames
+from .native import is_reusable_card
 
 
 class VaultCardSource:
@@ -19,9 +21,15 @@ class VaultCardSource:
 
     def _metadata(self, handle, merchant):
         meta = self.store.get_meta(handle)
-        from .native import is_reusable_card
         if meta is None or meta.kind != 'payment' or (not is_reusable_card(meta) and meta.origin != merchant):
             raise ValueError('card_origin_mismatch')
+        return meta
+
+    def display_name(self, handle, merchant):
+        if not is_reusable_card(self._metadata(handle, merchant)):
+            return 'merchant-bound card'
+        nickname = CardNicknames(self.service.nickname_home).snapshot().get(handle)
+        return f'reusable card nickname: "{nickname}"' if nickname else 'unnamed reusable card'
 
     def load(self, handle, merchant):
         self._metadata(handle, merchant)

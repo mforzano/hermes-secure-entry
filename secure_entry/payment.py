@@ -214,8 +214,9 @@ class LocalPayment:
                     "No live merchant parent is retained. Authorize this exact merchant/processor pair. "
                     if getattr(target, "offsite_root", False) else ""
                 )
+                card_display = self.card_source.display_name(rid, merchant) if self.card_source else None
                 verdict = request_elicitation_consent(
-                    f"Fill saved payment on merchant {merchant}; payment frame {provider}; handle {rid}" if self.card_source else
+                    f"Fill saved payment on merchant {merchant}; payment frame {provider}; {card_display}" if self.card_source else
                     f"Fill Link payment on merchant {merchant}; payment frame {provider}; request {rid}",
                     topology_disclosure + (
                     f'Exact page target {target.parent}; payment frame {target.frame}. Explicit selected fields: ' + ', '.join(
@@ -243,6 +244,8 @@ class LocalPayment:
                 stage = "postconsent_target"
                 target.check()
                 if self.card_source:
+                    if self.card_source.display_name(rid, merchant) != card_display:
+                        return {"success": False, "status": "refused", "refusal": "card_nickname_changed"}
                     stage = "vault_card_resolve"
                     card = self.card_source.load(rid, merchant)
                 else:

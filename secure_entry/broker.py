@@ -5,6 +5,7 @@ import secrets
 import threading
 import time
 from urllib.parse import urlsplit
+from .card_nicknames import clean_nickname, MAX_NICKNAME
 
 CARD_LIMITS = {'card_number':19, 'cardholder_name':160, 'exp_month':2,
                'exp_year':4, 'cvc':4, 'billing_postal_code':32}
@@ -19,6 +20,7 @@ class Request:
     owner: tuple
     deadline: float
     apply: object = field(repr=False)
+    nickname: str | None = None
     status: str = 'pending'
     result: dict = field(default_factory=dict)
     event: threading.Event = field(default_factory=threading.Event, repr=False)
@@ -35,8 +37,8 @@ class Broker:
         self.lock = threading.RLock()
         self.requests = {}
 
-    def issue(self, kind, origin, owner, apply):
-        if kind not in ('login', 'card', 'reusable_card', 'code', 'unlock') or not origin or not owner:
+    def issue(self, kind, origin, owner, apply, *, nickname=None):
+        if kind not in ('login', 'card', 'reusable_card', 'card_nickname', 'code', 'unlock') or not origin or not owner:
             raise ValueError('invalid request metadata')
         with self.lock:
             for token in list(self.requests):
@@ -47,7 +49,7 @@ class Broker:
                     raise ValueError('request capacity reached')
                 del self.requests[completed]
             request = Request(secrets.token_urlsafe(32), secrets.token_urlsafe(32), kind, origin,
-                              owner, self.clock() + self.ttl, apply)
+                              owner, self.clock() + self.ttl, apply, nickname=nickname)
             self.requests[request.token] = request
             return request
 
@@ -90,25 +92,32 @@ class Broker:
                 return self.status(token)
             required = (('identifier', 'password') if request.kind == 'login' else
                         tuple(CARD_LIMITS) if request.kind in ('card', 'reusable_card') else
-                        ('password',) if request.kind == 'unlock' else ('code',))
+                        ('password',) if request.kind == 'unlock' else
+                        () if request.kind == 'card_nickname' else ('code',))
             limits = {'identifier':320, 'password':4096, 'code':256, **CARD_LIMITS}
             if (fields.get('action') != 'submit'
                     or any(not isinstance(fields.get(k), str) or not fields[k] or len(fields[k]) > limits[k] for k in required)):
                 return {'status': 'invalid_input'}
             if request.kind == 'reusable_card' and fields.get('reusable_consent') != 'yes':
                 return {'status': 'invalid_input'}
+            payload = {k: fields[k] for k in required}
+            if request.kind == 'card_nickname' or (request.kind == 'reusable_card' and fields.get('nickname', '') != ''):
+                try:
+                    payload['nickname'] = clean_nickname(fields.get('nickname'))
+                except ValueError:
+                    return {'status': 'invalid_input'}
             request.status = 'received'
             apply, request.apply = request.apply, None
             # Serialize cancellation with the native commit. A cancellation cannot be
             # acknowledged and then be followed by a late credential write.
             # Actions must be short native commits, never human-length waits.
             try:
-                result = apply({k: fields[k] for k in required})
+                result = apply(payload)
             except Exception:
                 result = {'status': 'failed'}  # Never stringify a secret-bearing exception.
             if request.status == 'received':
                 request.status = result.get('status', 'failed')
-                request.result = {k: result[k] for k in ('handle', 'identifier') if k in result}
+                request.result = {k: result[k] for k in ('handle', 'identifier', 'nickname_status') if k in result}
             request.event.set()
             return self.status(token)
 
@@ -145,6 +154,7 @@ class Broker:
                                     'Each fill still requires native consent for the exact merchant/payment document.</p>'
                                     '<label><input type="checkbox" name="reusable_consent" value="yes" required>'
                                     'I explicitly opt in to reusable storage until explicit deletion.</label>')
+                        content += nickname_input(required=False)
                     else:
                         content += '<p>This card is bound only to this merchant. Request explicit deletion after verifying checkout outcome.</p>'
                     content += ('<p>Save a payment card in the native encrypted vault. '
@@ -161,6 +171,11 @@ class Broker:
                                 'This is your manager master password, not a website password. It is not saved by this plugin.</p>'
                                 '<label for="password">Password manager master password</label>'
                                 '<input id="password" name="password" type="password" autocomplete="off" required maxlength="4096">')
+                elif request.kind == 'card_nickname':
+                    current = ('Current nickname: “' + escape(request.nickname) + '”.' if request.nickname else
+                               'The selected reusable card has no nickname.')
+                    content += '<p>' + current + ' Continue only if this is the card you intended to label.</p>'
+                    content += nickname_input(required=True)
                 else:
                     content += ('<p>Enter the SMS, email, authenticator, or other login verification code. '
                                 'It will be sent only to the waiting native browser tool. This does not confirm sign-in.</p>'
@@ -186,9 +201,28 @@ class Broker:
                             'Do not submit again or request another link until checked.</p>')
             elif status == 'saved':
                 content += '<p>Saved in the native encrypted vault. No browser fields were filled.</p>'
+                if request.result.get('nickname_status') == 'unverified':
+                    content += '<p>The nickname could not be verified. Check the saved-card list; do not save the card again.</p>'
+            elif status == 'nickname_unavailable':
+                content += '<p>The nickname store was unavailable. No card was saved.</p>'
+            elif status == 'renamed':
+                content += '<p>Nickname saved. The native card record was not changed.</p>'
+            elif status == 'nickname_taken':
+                content += '<p>Another reusable card already uses that nickname. Request a new link and choose a different name.</p>'
+            elif status in ('card_unavailable', 'nickname_changed'):
+                content += '<p>The selected card is no longer available or its nickname changed. Check the saved-card list before requesting a new link.</p>'
             else:
                 content += '<p>No further entry is accepted. Request a new link if needed.</p>'
             return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
                     '<meta name="viewport" content="width=device-width, initial-scale=1">'
                     '<title>Hermes secure entry</title></head><body><main><h1>Hermes secure entry</h1>'
                     + content + '</main></body></html>')
+
+
+def nickname_input(*, required):
+    return ('<label for="nickname">Card nickname' + ('' if required else ' (optional)') + '</label>'
+            '<p>Use only English letters and single spaces, for example Travel Card. '
+            'Do not enter card details, passwords, or other private information here. '
+            'The nickname is visible in the saved-card list and fill approval.</p>'
+            f'<input id="nickname" name="nickname" autocomplete="off" maxlength="{MAX_NICKNAME}"'
+            + (' required' if required else '') + '>')

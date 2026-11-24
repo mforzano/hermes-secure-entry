@@ -14,6 +14,14 @@ Discord verification have operator-reported live evidence; Telegram has syntheti
 integration evidence only. Real manager unlock and comprehensive physical
 Safari/VoiceOver testing remain unverified. See the [platform matrix](docs/platforms.md).
 
+## Explicit saved sign-in password fill (0.5.20)
+
+`secure_entry_login_fill` is a sign-in-only fallback for one inspected password
+input at the exact saved HTTPS origin, including sign-in fields marked
+`autocomplete="new-password"`. It requires fresh native approval, leaves the
+page markup and stock classifier alone, and never submits. See the [tool schema,
+security boundary and activation requirements](docs/login-password-fill.md).
+
 ## Registration passwords (0.5.17)
 
 `secure_entry_signup_fill` fills an existing saved login's password into explicitly
@@ -24,7 +32,7 @@ same/cross-origin iframe documents. Unselected fields are untouched. It never
 submits or creates an account and does **not** weaken ordinary login recognition.
 See [usage, security, evidence and activation](docs/signup-password-fill.md).
 
-## Reusable cards (0.5.16)
+## Reusable cards and nicknames
 
 Use `secure_entry_request(operation="add_reusable_card")` **without an origin**
 only when the user explicitly chooses cross-website storage. The private form
@@ -33,8 +41,15 @@ payment record**, including CVC, until explicit deletion. Each fill still needs
 fresh native consent for the exact user-approved HTTPS merchant/payment document
 and agent-selected retained field mapping; there is no blanket browser approval.
 
-`secure_entry_card_list()` discovers handles and `reusable` / `merchant_bound`
-scope using metadata only. `secure_entry_card_fill` accepts either scope. Reusable
+`secure_entry_card_list()` discovers scope and reusable-card nicknames using
+metadata only. For new reusable cards, **Card nickname (optional)** is on the
+private form. For an existing reusable card, ask to label or rename the exact
+card; the private form asks only for its new nickname, not its card details.
+Nicknames are unique without regard to case and appear in native fill approval
+beside the exact destination. Keep internal handles out of chat. If several
+unnamed cards cannot be identified, do not guess.
+
+`secure_entry_card_fill` accepts either scope. Reusable
 cards are **not** automatically deleted after checkout; use
 `secure_entry_card_remove(handle=...)` only when deletion is explicitly requested.
 Merchant-bound `add_card` remains unchanged and still requires its exact origin
@@ -137,7 +152,7 @@ Requires `plugins.isolation: in_process`. The bridge refuses host isolation, cro
 
 ## Install and activation
 
-Secure Entry **0.5.19** targets **Hermes 0.23.2** (`==0.23.2`); see the [compatibility baseline](docs/hermes-0.23.2.md). For Hermes 0.22.1–0.22.5, use the prior Secure Entry 0.5.17 revision. Python requirements are supplied by Hermes. The plugin declares no additional Python dependencies. Use the PM-prepared Hermes interpreter, not an unrelated system Python and not raw pip against the live runtime.
+Secure Entry **0.5.20** targets **Hermes 0.23.2** (`==0.23.2`); see the [compatibility baseline](docs/hermes-0.23.2.md). For Hermes 0.22.1–0.22.5, use the prior Secure Entry 0.5.17 revision. Python requirements are supplied by Hermes. The plugin declares no additional Python dependencies. Use the PM-prepared Hermes interpreter, not an unrelated system Python and not raw pip against the live runtime.
 
 ### Direct GitHub install (supported Hermes CLI)
 

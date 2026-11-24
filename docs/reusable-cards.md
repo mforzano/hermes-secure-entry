@@ -1,4 +1,4 @@
-# Explicitly reusable native cards — 0.5.16
+# Explicitly reusable native cards
 
 ## Contract
 
@@ -14,7 +14,8 @@
 - Only that exact label/origin/kind combination means reusable. Ordinary legacy
   originless payments are excluded from plugin discovery and filling. The label
   is an explicit metadata convention, not protection from trusted vault editors.
-- `secure_entry_card_list()` returns only handle, scope and origin. It never
+- `secure_entry_card_list()` returns handle, scope, origin and (for reusable
+  cards) a nickname or `null`. It never
   resolves payloads. It is subject to the same authenticated DM/profile binding.
 - `secure_entry_card_fill` still requires current captured browser admission,
   exact HTTPS merchant and payment document, explicit backend-node field mapping,
@@ -31,6 +32,47 @@
   of a pending entry prevents storage; cancellation after a save does not delete
   it. Use explicit removal. `deletion_unknown` is not successful deletion.
   Local deletion does not revoke merchant/browser copies or an in-flight fill.
+
+## Nicknames (0.5.20)
+
+Use short, nonsecret names such as **Travel Card**. The private form accepts up
+to 32 ASCII letters and single inter-word spaces. It rejects digits, punctuation,
+control characters and formatting rather than echoing them. Do not put personal
+information or secrets in a nickname: valid names are shown in the read-only
+card list and in the native fill approval text. No last four or other payment
+values are displayed. Card handles are for tool calls only, not chat or approval
+prose.
+
+- New reusable card: `add_reusable_card` has a **Card nickname (optional)** field.
+  Leaving it empty preserves the existing unnamed save flow. A duplicate name
+  (case-insensitive) is refused before saving a native card. If the status is
+  `saved` with `nickname_status: unverified`, do not save again; inspect the list
+  and label that same card via the rename form if necessary.
+- Existing reusable card: use `secure_entry_request(operation="rename_reusable_card", handle=…)`
+  without an origin, passing the exact user-selected handle internally. Use a
+  unique existing nickname, a handle retained from an identified save, or the
+  only unnamed reusable entry if the user confirms that is their target. Never
+  pick by list position, recency or guesswork among indistinguishable cards.
+  Send the one-use link only to the originating DM. The form identifies the
+  current nickname (or that the card is unnamed), and takes only the new name.
+  `secure_entry_status` reports `renamed`; read back via the card list. Changed
+  or deleted entries reject stale forms; cancellation does not save a nickname.
+- Fill by the selected internal handle as before. Verify the quoted nickname,
+  HTTPS merchant and payment frame in the native approval. If the name changed
+  while approval was pending, no card is retrieved; inspect again. An unnamed
+  card is shown as such, not as a guessed identity.
+
+Stock Hermes 0.23.2 has no public atomic metadata setter. The plugin stores only
+handle-to-nickname mappings in `secure-entry-card-nicknames.sqlite3` in the active
+profile. SQLite transactions serialize concurrent writes and enforce name
+uniqueness. Rename does not resolve card payloads, alter the reserved native
+marker, or rewrite the vault. Missing or ineligible native records cannot expose
+stale names or receive a rename. Verified plugin deletion attempts sidecar cleanup
+without changing the native deletion result; stale entries are never shown and
+do not reserve a name against an eligible replacement. Older plugin versions
+ignore the sidecar without changing the encrypted cards. If the sidecar is
+unreadable, do not guess that a card is unnamed; restore access or resolve the
+profile state before selecting a reusable card.
 
 ## Synthetic acceptance
 
