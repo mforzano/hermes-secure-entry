@@ -78,7 +78,7 @@ class Server:
                     return
                 try:
                     parsed = parse_qs(self.rfile.read(int(length)).decode('utf-8'),
-                                      keep_blank_values=True, max_num_fields=9, errors='strict')
+                                      keep_blank_values=True, max_num_fields=10, errors='strict')
                     if any(len(values) != 1 for values in parsed.values()):
                         raise ValueError('duplicate fields')
                     fields = {name: values[0] for name, values in parsed.items()}

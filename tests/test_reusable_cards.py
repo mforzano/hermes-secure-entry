@@ -71,6 +71,10 @@ def test_same_card_two_merchants_top_level_and_iframe(self):
     fixture.setUp()
     self.addCleanup(fixture.doCleanups)
     prompts = []
+    issued = json.loads(self.service.request({'operation':'rename_reusable_card', 'handle':handle}))
+    request = self.service.broker.requests[issued['url'].rsplit('/', 1)[1]]
+    self.assertEqual(self.service.broker.submit(request.token, {'csrf':request.csrf,
+        'action':'submit', 'nickname':'Travel Card'})['status'], 'renamed')
     decision = ['once']
     def notify(data):
         prompts.append(data)
@@ -110,6 +114,9 @@ def test_same_card_two_merchants_top_level_and_iframe(self):
     self.assertTrue(fixture.page.evaluate("document.querySelector('#pan').value==='4242424242424242'"))
     self.assertEqual(len(prompts), 3)
     self.assertIn('https://merchant.test', str(prompts[0]))
+    self.assertEqual(prompts[0]['command'],
+        'Fill saved payment on merchant https://merchant.test; payment frame https://provider.test; reusable card nickname: "Travel Card"')
+    self.assertNotIn(handle, str(prompts))
     self.assertIn('https://provider.test', str(prompts[0]))
     self.assertIn('https://second.test', str(prompts[2]))
     self.assertNotIn(FIELDS['card_number'], str(prompts) + json.dumps(result))

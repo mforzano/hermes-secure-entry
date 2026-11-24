@@ -1,4 +1,4 @@
-"""Explicit registration-password adapter, separate from native login classification.
+"""Retained password writer and explicit registration-password adapter.
 
 Version-pinned server-side native VaultStore/approval APIs, NOT a public SDK
 password provider. Secrets exist only in this native handler and captured CDP.
@@ -7,6 +7,7 @@ password provider. Secrets exist only in this native handler and captured CDP.
 import json
 import re
 import time
+from typing import ClassVar
 
 from .native import owner, validate_origin
 from .payment_browser import Target
@@ -124,7 +125,7 @@ class RetainedInputTarget(Target):
                     pass
 
 
-class SignupTarget(RetainedInputTarget):
+class SavedPasswordTarget(RetainedInputTarget):
     field_key = "password_nodes"
     binding = PASSWORDS
 
@@ -150,9 +151,19 @@ class SignupTarget(RetainedInputTarget):
         }
 
 
-class SignupFill:
+class SavedPasswordFill:
     def __init__(self, service):
         self.service = service
+
+    def prepare(self, args):
+        args = dict(args)
+        args["password_nodes"] = validate_nodes(args["password_nodes"])
+        args["origin"] = validate_origin(args["origin"])
+        args["frame_origin"] = validate_origin(args["frame_origin"])
+        return args
+
+    def check_transport(self):
+        pass
 
     def fill(self, args, **kwargs):
         target, secret = None, None
@@ -169,15 +180,14 @@ class SignupFill:
 
             if isolation_mode() != "in_process":
                 raise ValueError("facility_unavailable")
+            self.check_transport()
             with self.service.lock:
                 if self.service.closed:
                     raise ValueError("operation_cancelled")
                 generation = self.service.generation
             bound = owner(self.service.home)
-            args = dict(args)
-            args["password_nodes"] = validate_nodes(args["password_nodes"])
-            origin = args["origin"] = validate_origin(args["origin"])
-            args["frame_origin"] = validate_origin(args["frame_origin"])
+            args = self.prepare(args)
+            origin = args["origin"]
             handle, identifier = args["handle"], args["identifier"]
             if not isinstance(handle, str) or not re.fullmatch(
                 r"vault_[0-9a-f]{12}", handle
@@ -198,6 +208,7 @@ class SignupFill:
             capture = None
 
             def guard():
+                self.check_transport()
                 if (
                     self.service.closed
                     or self.service.generation != generation
@@ -242,26 +253,12 @@ class SignupFill:
             capture = SUPERVISOR_REGISTRY.capture(task)
             current()
             stage = "target_binding"
-            target = SignupTarget(capture, args, guard)
+            target = self.target_type(capture, args, guard)
             stage = "native_consent"
             wait_before = human_wait_seconds(bound[-2])
             started = time.monotonic()
-            verdict = request_elicitation_consent(
-                f"Registration password fill for {identifier} at {origin}; saved login {handle}",
-                f"Registration destination {origin}; password document {args['frame_origin']}; "
-                f"exact page {target.parent}; frame {target.frame}; selected password backendNodeIds "
-                + ", ".join(str(n) for n in args["password_nodes"])
-                + ". "
-                "Fill ONLY these selected actual password fields with the saved password, including confirmation if selected. "
-                "Selected prefills may be replaced. No identifier is typed, no form is submitted and no account is created by this tool. "
-                + (
-                    "No live registration-origin parent is retained for this offsite top-level document. "
-                    if getattr(target, "offsite_root", False)
-                    else ""
-                ),
-                surface="vault-login",
-                title="Confirm registration password fill?",
-            )
+            message, description, title = self.consent(args, target)
+            verdict = request_elicitation_consent(message, description, surface="vault-login", title=title)
             deadline += min(
                 max(0, time.monotonic() - started),
                 max(0, human_wait_seconds(bound[-2]) - wait_before),
@@ -271,7 +268,7 @@ class SignupFill:
                     {
                         "success": False,
                         "status": "consent_declined",
-                        "signup_diagnostic_version": SIGNUP_DIAGNOSTIC_VERSION,
+                        **self.diagnostic,
                     }
                 )
             stage = "postconsent_current"
@@ -282,6 +279,7 @@ class SignupFill:
             metadata()
             current()
             stage = "vault_resolve"
+            self.check_transport()
             secret = store.resolve_secret(handle)
             password = secret.get("password")
             if not isinstance(password, str) or not password:
@@ -293,9 +291,7 @@ class SignupFill:
             stage = "write"
             result = target.fill_password(password)
             current()
-            return json.dumps(
-                {**result, "signup_diagnostic_version": SIGNUP_DIAGNOSTIC_VERSION}
-            )
+            return json.dumps({**result, **self.diagnostic})
         except Exception:  # noqa: BLE001 -- value-free native exception boundary
             # Neither raw native errors nor CDP exceptionDetails cross this boundary.
             return json.dumps(
@@ -307,7 +303,7 @@ class SignupFill:
                     "stage": stage,
                     "reinspection_required": stage
                     in {"target_binding", "postconsent_target", "write"},
-                    "signup_diagnostic_version": SIGNUP_DIAGNOSTIC_VERSION,
+                    **self.diagnostic,
                 }
             )
         finally:
@@ -315,3 +311,32 @@ class SignupFill:
                 secret.clear()
             if target is not None:
                 target.close()
+
+
+class SignupTarget(SavedPasswordTarget):
+    pass
+
+
+class SignupFill(SavedPasswordFill):
+    target_type = SignupTarget
+    diagnostic: ClassVar[dict[str, str]] = {
+        "signup_diagnostic_version": SIGNUP_DIAGNOSTIC_VERSION
+    }
+
+    def consent(self, args, target):
+        origin = args["origin"]
+        return (
+            f"Registration password fill for {args['identifier']} at {origin}; saved login {args['handle']}",
+            f"Registration destination {origin}; password document {args['frame_origin']}; "
+            f"exact page {target.parent}; frame {target.frame}; selected password backendNodeIds "
+            + ", ".join(str(n) for n in args["password_nodes"])
+            + ". "
+            "Fill ONLY these selected actual password fields with the saved password, including confirmation if selected. "
+            "Selected prefills may be replaced. No identifier is typed, no form is submitted and no account is created by this tool. "
+            + (
+                "No live registration-origin parent is retained for this offsite top-level document. "
+                if getattr(target, "offsite_root", False)
+                else ""
+            ),
+            "Confirm registration password fill?",
+        )

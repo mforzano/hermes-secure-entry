@@ -24,6 +24,21 @@ def register(ctx):
           'otp_nodes':{'type':'array','minItems':1,'maxItems':12,'uniqueItems':True,'items':{'type':'integer','minimum':1},
                        'description':'CDP backendNodeId for the intended OTP input or every member of one complete split widget; no other controls.'}},
          ['origin','parent','frame','frame_origin','otp_nodes']),
+        ('secure_entry_login_fill', service.login_fill,
+         'Explicit saved-password fill for SIGN-IN only when ordinary browser_vault cannot recognize the inspected sign-in field. '
+         'Select one visible writable INPUT type=password by backendNodeId in the exact HTTPS top-level document at the saved login origin. '
+         'Autocomplete (including new-password) does not classify this explicit selection. Do not use for signup, reset, password change, confirmation, or iframe/offsite documents. '
+         'Native one-time approval names the sign-in account, origin and exact retained destination before private retrieval. '
+         'Fills and privately verifies only that password; never types the identifier, submits or signs in by itself. No secrets, selectors or scripts in arguments. '
+         'Do not blindly retry write_unknown; inspect value-free state first.',
+         {'handle':{'type':'string','description':'Exact existing native login metadata handle.'},
+          'origin':{'type':'string','description':'Exact HTTPS origin matching both the saved login and actual top-level password document.'},
+          'identifier':{'type':'string','description':'Approved account identifier, exactly equal to saved metadata. Not typed by this tool.'},
+          'parent':{'type':'string','description':'Inspected page target ID on the current task-captured browser.'},
+          'frame':{'type':'string','description':'Inspected top-level frame id from Page.getFrameTree.'},
+          'loader_id':{'type':'string','description':'Top-level loaderId from Page.getFrameTree for the inspected document.'},
+          'password_node':{'type':'integer','minimum':1,'description':'One inspected CDP backendNodeId for the actual sign-in password INPUT. Not a frontend nodeId.'}},
+         ['handle','origin','identifier','parent','frame','loader_id','password_node']),
         ('secure_entry_signup_fill', service.signup_fill,
          'Explicitly consented REGISTRATION password fill from an existing saved native login handle. '
          'Inspect the exact selected page/frame and choose actual writable password backend node IDs, including confirmation if present. '
@@ -44,7 +59,8 @@ def register(ctx):
          ['handle','origin','identifier','parent','frame','frame_origin','password_nodes']),
         ('secure_entry_card_list', service.list_cards,
          'Discover native payment handles and scope only in an authenticated human DM. No secret retrieval. '
-         'Lists explicitly reusable cards and exact HTTPS merchant-bound cards; excludes legacy originless entries. '
+         'Lists reusable cards with nonsecret nickname (null if unnamed) and exact HTTPS merchant-bound cards; excludes legacy originless entries. '
+         'Keep handles internal. Use a unique nickname or a handle already associated with the user-selected card; never guess among unnamed cards. '
          'Reusable cards remain saved until explicit deletion; each mapped fill requires fresh exact-destination native consent.',
          {}, []),
         ('secure_entry_card_fill', service.selected_card_fill,
@@ -81,14 +97,17 @@ def register(ctx):
          ['parent','frame','merchant_origin','frame_origin','spend_request_id']),
         ('secure_entry_request', service.request,
          'Request a private one-use form to ADD a website login or real payment card to the native encrypted Hermes vault without a browser. '
-         'For reusable storage use add_reusable_card without origin; the private page requires explicit opt-in to retain one cross-website card until explicit deletion. For add_card first determine the official merchant checkout origin (not the cross-origin payment iframe); bind it exactly. '
+         'For reusable storage use add_reusable_card without origin; the private page offers an optional nickname and requires explicit opt-in to retain one cross-website card until explicit deletion. For add_card first determine the official merchant checkout origin (not the cross-origin payment iframe); bind it exactly. '
+         'To label or rename an existing reusable card, use rename_reusable_card with its exact known handle and no origin. Only the private form accepts the nickname; no card re-entry. '
+         'Keep handles out of user-facing prose. Never infer which card to rename among indistinguishable unnamed cards. '
          'The native payment contract encrypts and persists CVC too; the private form discloses this. Retain saved handle for '
          'secure_entry_card_fill. Reusable cards remain until explicitly requested deletion, not automatic checkout cleanup. Bound cards retain explicit cleanup after verifying checkout outcome. Link remains available separately. '
          'Photon, Discord, or Telegram DM only (Discord/Telegram synthetic-tested; live verification pending). Does not sign in. For verification codes choose secure_entry_otp_fill or the existing browser_vault action=enter_code WITHOUT a handle before prompting; this request tool does not collect codes. '
          'Update, transient sign-in and save-and-sign-in '
          'remain unsupported. Never pass credentials or codes in tool arguments.',
-         {'operation': {'type':'string', 'enum':['add_login','add_card','add_reusable_card','update_login','sign_in_once','save_and_sign_in','verification_code']},
-          'origin': {'type':'string','description':'Required exact HTTPS website origin for add_login/add_card. Omit for add_reusable_card, which additionally requires explicit opt-in on the private form.'}},
+         {'operation': {'type':'string', 'enum':['add_login','add_card','add_reusable_card','rename_reusable_card','update_login','sign_in_once','save_and_sign_in','verification_code']},
+          'handle': {'type':'string','description':'Only for rename_reusable_card: exact native handle of the reusable card explicitly selected by the user. Never guess.'},
+          'origin': {'type':'string','description':'Required exact HTTPS website origin for add_login/add_card. Omit for add_reusable_card and rename_reusable_card.'}},
          ['operation']),
         ('secure_entry_status', service.status, 'Read metadata-only request status in the same originating Photon, Discord, or Telegram DM session.',
          {'request_id':{'type':'string'}}, ['request_id']),
@@ -114,7 +133,7 @@ def register(ctx):
                 'Unselected billing, contact, consent and other forms are untouched. '
                 'Separate native consent binds the exact retained targets, document and origins before private retrieval. '
                 'Never supplies secrets to the model; never submits, purchases or deletes. write_unknown can mean a partial fill. '
-                + ('Uses a merchant-bound or explicitly reusable native vault handle. Use secure_entry_card_list for scope. Reusable cards persist until explicit deletion; do not delete after each checkout unless requested. Bound cards keep their exact origin and temporary cleanup workflow.' if name=='secure_entry_card_fill' else
+                + ('Uses a merchant-bound or explicitly reusable native vault handle. Use secure_entry_card_list for scope and nickname. Keep handles internal; never guess between cards. Reusable cards persist until explicit deletion; do not delete after each checkout unless requested. Bound cards keep their exact origin and temporary cleanup workflow.' if name=='secure_entry_card_fill' else
                    'Requires an already approved Link spend request; private native CLI handoff, no vault save.'))
         ctx.register_tool(name=name, toolset='secure_entry', handler=handler,
                           schema={'name':name, 'description':description,
