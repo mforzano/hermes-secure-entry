@@ -1,9 +1,19 @@
-"""Synthetic Windows kernel ownership; no credentials, browser or network."""
+"""Synthetic Windows kernel ownership; no credentials, browser or network.
+
+Windows-only: token owner and DACL semantics have no POSIX counterpart. The
+POSIX owner and mode refusals are covered by test_payment_file_posix.py.
+"""
 
 import json
+import os
 import tempfile
 import unittest
 from contextlib import contextmanager
+
+if os.name != "nt":
+    raise unittest.SkipTest(
+        "Windows token-owner and DACL tests; POSIX owner/mode tests are in test_payment_file_posix.py"
+    )
 
 import win32api as api
 import win32con as con

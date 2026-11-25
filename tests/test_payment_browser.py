@@ -10,6 +10,9 @@ from tools.browser_supervisor import SUPERVISOR_REGISTRY
 class PaymentBrowserTests(unittest.TestCase):
     def setUp(self):
         self.pw = sync_playwright().start()
+        # Registered before launch: a failed launch must still stop the sync
+        # driver, otherwise its running asyncio loop breaks every later test.
+        self.addCleanup(self.pw.stop)
         self.browser = self.pw.chromium.launch(
             channel="chrome",
             headless=True,
@@ -67,7 +70,6 @@ class PaymentBrowserTests(unittest.TestCase):
     def cleanup(self):
         SUPERVISOR_REGISTRY.stop("synthetic-payment")
         self.browser.close()
-        self.pw.stop()
 
     def _run_facility(
         self, choice="once", before_answer=None, issued_card=None, expected_prompts=1,

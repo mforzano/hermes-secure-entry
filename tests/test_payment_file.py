@@ -1,9 +1,12 @@
 """Only synthetic credentials; Windows kernel ACL and handle tests."""
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
 from secure_entry import payment_file
 
 CARD = {
@@ -18,10 +21,22 @@ CARD = {
 }
 
 
+def write_as_link(path, text):
+    """Create the file the way Link does: exclusive, owner-only (0600) on POSIX.
+
+    Windows keeps the inherited protected DACL on the inbox, so a plain write
+    is what that platform's tests have always used.
+    """
+    if os.name == "nt":
+        Path(path).write_text(text, encoding="utf-8")
+        return
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
 class PaymentFileTests(unittest.TestCase):
     def test_refusal_categories_are_fixed_and_malformed_shapes_are_secret_free(self):
-        from unittest.mock import patch
-
         cases = [
             ([], "object"),
             ({**CARD, "spend_request_id": "SYNTHETIC_PRIVATE"}, "request_match"),
@@ -42,7 +57,7 @@ class PaymentFileTests(unittest.TestCase):
         for data, category in cases:
             with self.subTest(category=category), tempfile.TemporaryDirectory() as root:
                 with payment_file.PrivateCard(root) as inbox:
-                    inbox.path.write_text(json.dumps(data))
+                    write_as_link(inbox.path, json.dumps(data))
                     with self.assertRaises(ValueError) as caught:
                         inbox.consume("lsrq_synthetic", "https://merchant.invalid")
                     self.assertEqual(str(caught.exception), "private_file_refused")
@@ -50,11 +65,12 @@ class PaymentFileTests(unittest.TestCase):
                     self.assertNotIn("SYNTHETIC_PRIVATE", repr(caught.exception))
                     self.assertFalse(inbox.path.exists())
         with tempfile.TemporaryDirectory() as root, payment_file.PrivateCard(root) as inbox:
-            inbox.path.write_text(json.dumps(CARD))
-            with patch.object(payment_file, "_check_acl", side_effect=OSError("SYNTHETIC_PRIVATE")):
+            write_as_link(inbox.path, json.dumps(CARD))
+            check = "_check_acl" if os.name == "nt" else "_check_posix_acl"
+            with patch.object(payment_file, check, side_effect=OSError("SYNTHETIC_PRIVATE")):
                 with self.assertRaises(ValueError) as caught:
                     inbox.consume("lsrq_synthetic", "https://merchant.invalid")
-            self.assertEqual(getattr(caught.exception, "category", None), "windows_acl")
+            self.assertEqual(getattr(caught.exception, "category", None), payment_file.ACL_CATEGORY)
             self.assertNotIn("SYNTHETIC_PRIVATE", repr(caught.exception))
 
     def test_issued_billing_and_optional_cvc_preserved(self):
@@ -67,18 +83,22 @@ class PaymentFileTests(unittest.TestCase):
             tempfile.TemporaryDirectory() as root,
             payment_file.PrivateCard(root) as inbox,
         ):
-            inbox.path.write_text(json.dumps(data))
+            write_as_link(inbox.path, json.dumps(data))
             self.assertEqual(
                 inbox.consume("lsrq_synthetic", "https://merchant.invalid"),
                 data["card"],
             )
 
+    @unittest.skipUnless(
+        os.name == "nt",
+        "Windows DACL edit; the POSIX equivalent is test_posix_group_or_world_mode_rejected_and_file_deleted",
+    )
     def test_world_readable_acl_rejected_and_file_deleted(self):
         import win32security as sec
 
         with tempfile.TemporaryDirectory() as root:
             with payment_file.PrivateCard(root) as inbox:
-                inbox.path.write_text(json.dumps(CARD))
+                write_as_link(inbox.path, json.dumps(CARD))
                 sd = sec.GetFileSecurity(str(inbox.path), sec.DACL_SECURITY_INFORMATION)
                 acl = sd.GetSecurityDescriptorDacl()
                 acl.AddAccessAllowedAce(
@@ -91,11 +111,9 @@ class PaymentFileTests(unittest.TestCase):
                 self.assertFalse(inbox.path.exists())
 
     def test_hardlink_refused(self):
-        import os
-
         with tempfile.TemporaryDirectory() as root:
             with payment_file.PrivateCard(root) as inbox:
-                inbox.path.write_text(json.dumps(CARD))
+                write_as_link(inbox.path, json.dumps(CARD))
                 os.link(inbox.path, Path(root) / "other-link.json")
                 with self.assertRaisesRegex(ValueError, "^private_file_refused$"):
                     inbox.consume("lsrq_synthetic", "https://merchant.invalid")
@@ -113,7 +131,7 @@ class PaymentFileTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as root,
             ):
                 with payment_file.PrivateCard(root) as inbox:
-                    inbox.path.write_text(raw)
+                    write_as_link(inbox.path, raw)
                     with self.assertRaisesRegex(ValueError, "^private_file_refused$"):
                         inbox.consume(rid, origin)
                     self.assertFalse(inbox.path.exists())
@@ -122,7 +140,7 @@ class PaymentFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             with payment_file.PrivateCard(root) as inbox:
                 p = inbox.path
-                p.write_text(json.dumps(CARD), encoding="utf-8")
+                write_as_link(p, json.dumps(CARD))
                 self.assertEqual(
                     inbox.consume("lsrq_synthetic", "https://merchant.invalid")[
                         "number"

@@ -1,15 +1,32 @@
-"""Windows private Link output inbox. No model-supplied file paths or stdout.
+"""Private Link output inbox. No model-supplied file paths or stdout.
 
-ACLs are established before Link creates the file, not repaired after a leak.
-A no-sharing, no-follow, delete-on-close kernel handle consumes each file once.
+Windows: ACLs are established before Link creates the file, not repaired after
+a leak. A no-sharing, no-follow, delete-on-close kernel handle consumes each
+file once.
+
+POSIX (Linux, macOS): the inbox directory is created mode 0700 and the file is
+accepted only if it is a regular, single-link, owner-owned file with no group
+or other permission bits (0600 is what Link requests). It is opened with
+O_NOFOLLOW relative to the directory handle, read through that descriptor and
+unlinked by name only while the name still refers to the same inode.
 """
 
 import json
+import os
 import re
 import secrets
+import stat
 from pathlib import Path
 from urllib.parse import urlsplit
 from contextlib import contextmanager
+
+_WINDOWS = os.name == "nt"
+# Name of the category used when the access-control check itself fails.
+ACL_CATEGORY = "windows_acl" if _WINDOWS else "posix_acl"
+_MAX_BYTES = 16384
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 
 
 class PrivateFileRefused(ValueError):
@@ -17,8 +34,8 @@ class PrivateFileRefused(ValueError):
 
     CATEGORIES = frozenset({
         "closed", "windows_api", "directory_open", "directory_info",
-        "directory_reparse", "windows_acl", "owner", "file_open", "file_info",
-        "filetype", "linkcount", "size", "read", "json", "object",
+        "directory_reparse", "windows_acl", "posix_acl", "owner", "file_open",
+        "file_info", "filetype", "linkcount", "size", "read", "json", "object",
         "request_match", "merchant_origin", "card_type", "card_number_type",
         "card_number_format", "cvc_type_format", "expiry_type_range",
         "billing_type", "billing_field_type", "billing_field_format",
@@ -114,6 +131,114 @@ def _check_acl(handle):
             raise PrivateFileRefused("windows_acl")
 
 
+def _current_uid():
+    return os.geteuid()
+
+
+def _check_posix_acl(info):
+    """Owner-only: the owner must be this user and no group/other bits may be set.
+
+    A POSIX ACL cannot widen access past the group bits, so a clear group/other
+    mask also rules out named-user and named-group entries.
+    """
+    if info.st_uid != _current_uid():
+        raise PrivateFileRefused("owner", owner_class="other")
+    if info.st_mode & 0o077:
+        raise PrivateFileRefused("posix_acl")
+
+
+def _read_bounded(fd, limit):
+    chunks = []
+    total = 0
+    while total < limit:
+        chunk = os.read(fd, min(65536, limit - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
+def _unlink_if_same(dir_fd, name, info):
+    """Delete the consumed file only while the name still refers to our inode."""
+    try:
+        current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+        return False
+    os.unlink(name, dir_fd=dir_fd)
+    return True
+
+
+def _payload(raw, request_id, merchant_origin):
+    """Validate the bounded Link artifact bytes. Raises only fixed categories."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        raise PrivateFileRefused("json") from None
+    if not isinstance(data, dict):
+        raise PrivateFileRefused("object")
+    if data.get("spend_request_id") != request_id:
+        raise PrivateFileRefused("request_match")
+    try:
+        origin = _origin(data.get("merchant_url", ""))
+    except Exception:
+        raise PrivateFileRefused("merchant_origin") from None
+    if origin != merchant_origin:
+        raise PrivateFileRefused("merchant_origin")
+    card = data.get("card", {})
+    if not isinstance(card, dict):
+        raise PrivateFileRefused("card_type")
+    if not isinstance(card.get("number"), str):
+        raise PrivateFileRefused("card_number_type")
+    if not re.fullmatch(r"[0-9]{12,19}", card["number"]):
+        raise PrivateFileRefused("card_number_format")
+    if "cvc" in card and (
+        not isinstance(card["cvc"], str)
+        or not re.fullmatch(r"[0-9]{3,4}", card["cvc"])
+    ):
+        raise PrivateFileRefused("cvc_type_format")
+    if (
+        type(card.get("exp_month")) is not int
+        or not 1 <= card["exp_month"] <= 12
+        or type(card.get("exp_year")) is not int
+        or not 2026 <= card["exp_year"] <= 2100
+    ):
+        raise PrivateFileRefused("expiry_type_range")
+    result = {
+        k: card[k]
+        for k in ("number", "cvc", "exp_month", "exp_year")
+        if k in card
+    }
+    if "billing_address" in card:
+        billing = card["billing_address"]
+        if not isinstance(billing, dict):
+            raise PrivateFileRefused("billing_type")
+        if any(not isinstance(v, str) for v in billing.values()):
+            raise PrivateFileRefused("billing_field_type")
+        if any(
+            len(v) > 256 or any(ord(c) < 32 for c in v)
+            for v in billing.values()
+        ):
+            raise PrivateFileRefused("billing_field_format")
+        result["billing_address"] = {
+            k: v
+            for k, v in billing.items()
+            if k
+            in (
+                "name",
+                "line1",
+                "line2",
+                "city",
+                "state",
+                "postal_code",
+                "country",
+            )
+        }
+    return result
+
+
 class PrivateCard:
     def __init__(self, root):
         self.directory = Path(root) / ("link-payment-" + secrets.token_hex(24))
@@ -121,6 +246,11 @@ class PrivateCard:
         self.closed = False
 
     def __enter__(self):
+        if not _WINDOWS:
+            # mkdir applies the umask only by removing bits, so the result is
+            # owner-only from creation; no window exists with wider access.
+            os.mkdir(self.directory, 0o700)
+            return self
         _, con, file, sec, types = _windows()
         acl = sec.ACL()
         flags = con.OBJECT_INHERIT_ACE | con.CONTAINER_INHERIT_ACE
@@ -135,7 +265,71 @@ class PrivateCard:
         file.CreateDirectory(str(self.directory), attrs)
         return self
 
+    def _consume_posix(self, request_id, merchant_origin):
+        category = "directory_open"
+        object_type = None
+        dir_fd = None
+        file_fd = None
+        info = None
+        try:
+            if self.closed:
+                raise PrivateFileRefused("closed")
+            # O_NOFOLLOW on the directory refuses a symlinked inbox (ELOOP).
+            dir_fd = os.open(self.directory, os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW)
+            category = "directory_info"
+            dir_info = os.fstat(dir_fd)
+            if not stat.S_ISDIR(dir_info.st_mode):
+                raise PrivateFileRefused("directory_info")
+            category = ACL_CATEGORY
+            object_type = "directory"
+            _check_posix_acl(dir_info)
+            category = "file_open"
+            # Relative to the verified directory handle; no-follow; FIFO-safe.
+            file_fd = os.open(
+                self.path.name,
+                os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK,
+                dir_fd=dir_fd,
+            )
+            category = "file_info"
+            info = os.fstat(file_fd)
+            object_type = "file"
+            if not stat.S_ISREG(info.st_mode):
+                raise PrivateFileRefused("filetype")
+            if info.st_nlink != 1:
+                raise PrivateFileRefused("linkcount")
+            if info.st_size > _MAX_BYTES:
+                raise PrivateFileRefused("size")
+            category = ACL_CATEGORY
+            _check_posix_acl(info)
+            category = "read"
+            raw = _read_bounded(file_fd, _MAX_BYTES + 1)
+            if len(raw) > _MAX_BYTES:
+                raise PrivateFileRefused("size")
+            category = "json"
+            return _payload(raw, request_id, merchant_origin)
+        except PrivateFileRefused as exc:
+            exc.object_type = object_type
+            raise
+        except Exception:
+            raise PrivateFileRefused(category) from None
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
+            if info is not None:
+                # Single use: delete on success and refusal alike, as the
+                # Windows delete-on-close handle does. A swapped-in name is
+                # never deleted; it fails closed on the next step instead.
+                if not _unlink_if_same(dir_fd, self.path.name, info):
+                    raise PrivateFileRefused("file_info", owner_class=None)
+            if dir_fd is not None:
+                os.close(dir_fd)
+
     def consume(self, request_id, merchant_origin):
+        if not _WINDOWS:
+            return self._consume_posix(request_id, merchant_origin)
+        return self._consume_windows(request_id, merchant_origin)
+
+    def _consume_windows(self, request_id, merchant_origin):
         category = "windows_api"
         object_type = None
         try:
@@ -196,65 +390,7 @@ class PrivateCard:
                     category = "read"
                     _, raw = file.ReadFile(handle, 16385)
                     category = "json"
-                    data = json.loads(raw)
-                    if not isinstance(data, dict):
-                        raise PrivateFileRefused("object")
-                    if data.get("spend_request_id") != request_id:
-                        raise PrivateFileRefused("request_match")
-                    category = "merchant_origin"
-                    if _origin(data.get("merchant_url", "")) != merchant_origin:
-                        raise PrivateFileRefused("merchant_origin")
-                    card = data.get("card", {})
-                    if not isinstance(card, dict):
-                        raise PrivateFileRefused("card_type")
-                    if not isinstance(card.get("number"), str):
-                        raise PrivateFileRefused("card_number_type")
-                    if not re.fullmatch(r"[0-9]{12,19}", card["number"]):
-                        raise PrivateFileRefused("card_number_format")
-                    if "cvc" in card and (
-                        not isinstance(card["cvc"], str)
-                        or not re.fullmatch(r"[0-9]{3,4}", card["cvc"])
-                    ):
-                        raise PrivateFileRefused("cvc_type_format")
-                    if (
-                        type(card.get("exp_month")) is not int
-                        or not 1 <= card["exp_month"] <= 12
-                        or type(card.get("exp_year")) is not int
-                        or not 2026 <= card["exp_year"] <= 2100
-                    ):
-                        raise PrivateFileRefused("expiry_type_range")
-                    result = {
-                        k: card[k]
-                        for k in ("number", "cvc", "exp_month", "exp_year")
-                        if k in card
-                    }
-                    if "billing_address" in card:
-                        billing = card["billing_address"]
-                        if not isinstance(billing, dict):
-                            raise PrivateFileRefused("billing_type")
-                        if any(not isinstance(v, str) for v in billing.values()):
-                            raise PrivateFileRefused("billing_field_type")
-                        if any(
-                            len(v) > 256
-                            or any(ord(c) < 32 for c in v)
-                            for v in billing.values()
-                        ):
-                            raise PrivateFileRefused("billing_field_format")
-                        result["billing_address"] = {
-                            k: v
-                            for k, v in billing.items()
-                            if k
-                            in (
-                                "name",
-                                "line1",
-                                "line2",
-                                "city",
-                                "state",
-                                "postal_code",
-                                "country",
-                            )
-                        }
-                    return result
+                    return _payload(raw, request_id, merchant_origin)
         except PrivateFileRefused as exc:
             exc.object_type = object_type
             raise

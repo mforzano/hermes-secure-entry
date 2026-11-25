@@ -10,9 +10,11 @@ Neither route submits, purchases or deletes automatically.
 """
 
 import json
+import os
 import re
 import time
 from pathlib import Path
+from typing import Any
 from .native import owner, validate_origin
 from .payment_file import PrivateCard, PrivateFileRefused
 from .payment_browser import BindingRefused, Target, WriteRefused
@@ -43,6 +45,15 @@ class RetrievalRefused(ValueError):
         super().__init__("link_retrieval_refused")
         self.category = category if category in self.CATEGORIES else "producer_failed"
         self.exit_status = exit_status if type(exit_status) is int else None
+
+
+def _child_umask() -> dict[str, Any]:
+    """POSIX: the Link child creates its private output owner-only (never wider).
+
+    Popen's umask is POSIX-only and Windows already gets a protected inherited
+    DACL on the inbox, so Windows passes nothing.
+    """
+    return {} if os.name == "nt" else {"umask": 0o077}
 
 
 def retrieve_card(command, request_id, output):
@@ -82,6 +93,7 @@ def retrieve_card(command, request_id, output):
             timeout=40,
             shell=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **_child_umask(),
         )
         if result.returncode:
             raise RetrievalRefused("subprocess_exit", result.returncode)
