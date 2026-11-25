@@ -46,3 +46,50 @@ jobs:
           "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -m unittest discover -s tests -v
           "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -c "from hermes_cli.plugins_cmd import cmd_plugin_doctor; cmd_plugin_doctor('.', ci=True)"
           "$GITHUB_WORKSPACE/test-env/Scripts/python.exe" -c "from hermes_cli.plugins_cmd_catalog import cmd_validate; cmd_validate('.', as_json=True, install_deps=False)"
+
+  linux:
+    # Same pinned Hermes revision and the same synthetic suite as the Windows
+    # lane. POSIX private-inbox code paths run here; Windows DACL tests skip.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+      - uses: actions/checkout@v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: ae2a81ccc00e9b7c06301523e5bb09608397149c
+          path: hermes
+          # Doctor and catalog validation need the actual tagged host version.
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - uses: astral-sh/setup-uv@v6
+      - name: Build isolated native test environment through PM
+        shell: bash
+        working-directory: hermes
+        run: python -m pm.build_env --source . --out "$GITHUB_WORKSPACE/test-env" --group dev --group test
+      - name: Install bot SDKs and browser-test dependency in the isolated environment only
+        shell: bash
+        run: uv pip install --python "$GITHUB_WORKSPACE/test-env/bin/python" aiohttp python-telegram-bot discord.py playwright
+      - name: Provision Chrome for disposable captured-browser tests
+        shell: bash
+        # --with-deps installs the Chrome system libraries on the runner.
+        run: '"$GITHUB_WORKSPACE/test-env/bin/python" -m playwright install --with-deps chrome'
+      - name: Test synthetic HTTP and native encrypted vault
+        shell: bash
+        working-directory: plugin
+        env:
+          HERMES_HOME: ${{ runner.temp }}/secure-entry-test-home
+          # Chrome's singleton socket path must stay under the Unix socket limit.
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE/hermes:$GITHUB_WORKSPACE/plugin"
+          "$GITHUB_WORKSPACE/test-env/bin/python" -c "from hermes_cli.plugins_manifest import running_hermes_version; assert running_hermes_version() == '0.23.2', running_hermes_version()"
+          "$GITHUB_WORKSPACE/test-env/bin/python" -m unittest discover -s tests -v
+          "$GITHUB_WORKSPACE/test-env/bin/python" -c "from hermes_cli.plugins_cmd import cmd_plugin_doctor; cmd_plugin_doctor('.', ci=True)"
+          "$GITHUB_WORKSPACE/test-env/bin/python" -c "from hermes_cli.plugins_cmd_catalog import cmd_validate; cmd_validate('.', as_json=True, install_deps=False)"
