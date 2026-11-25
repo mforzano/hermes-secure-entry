@@ -265,6 +265,8 @@ hermes plugins doctor /absolute/hermes-secure-entry --ci
 hermes plugins validate /absolute/hermes-secure-entry
 ```
 
+**Linux (POSIX)** runs the same suite in the `linux` job of [tests.yml](.github/workflows/tests.yml) on `ubuntu-latest`, against the same pinned Hermes revision. Locally, use the same commands with `PYTHONPATH` separated by `:`, the interpreter at `bin/python`, `playwright install --with-deps chrome`, and a short `TMPDIR` (for example `/tmp/se`). Chrome puts a singleton socket under `TMPDIR`, and that path must fit the 108-byte Unix socket limit. Windows-only DACL and token-owner tests skip on Linux with a platform reason; the POSIX mode, owner, link and swap refusals they cover run in `tests/test_payment_file_posix.py`. Details: [Linux support](docs/linux-support.md).
+
 The tests use synthetic inputs only and temporary native vaults. Coverage includes actual encryption/readback, HTTP guards, CSRF, one-use concurrency, expiry, cancellation-versus-commit, profile/session scope, source staging, socket-free registration, real registered native OTP execution against a synthetic supervisor, redaction before native writes, HTTP-to-callback transport, genuine unlock entry, callback restoration/thread propagation, captured-callback invalidation, and delivery/expiry/lifecycle races. Synthetic supervisor success is not real browser integration. See [recovery](docs/recovery.md) and [security](SECURITY.md).
 
 ## Disclosure
